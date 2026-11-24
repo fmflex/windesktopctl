@@ -7,6 +7,7 @@ import pytest
 from deskctl.core import DeskctlError
 from deskctl.core import elements as el
 from deskctl.core import state as st
+from deskctl.core import windows as win
 
 
 @pytest.fixture
@@ -14,6 +15,19 @@ def home(tmp_path, monkeypatch):
     d = tmp_path / "deskctl"
     monkeypatch.setenv("DESKCTL_HOME", str(d))
     return d
+
+
+def _wininfo(hwnd=42, rect=(0, 0, 100, 100), title="T", proc="p.exe"):
+    return win.WindowInfo(hwnd, title, 1, proc, rect, False, True)
+
+
+@pytest.fixture
+def live_window(monkeypatch):
+    """Mock window_info/focused_hwnd so hwnd=42 exists, is foreground, rect
+    (0,0,100,100) - matching what _record() stores."""
+    monkeypatch.setattr(win, "window_info", lambda h: _wininfo(int(h)))
+    monkeypatch.setattr(win, "focused_hwnd", lambda: 42)
+    monkeypatch.setattr(win, "set_foreground", lambda h: True)
 
 
 def _record(hwnd=42, elements=None, ts=None):
@@ -43,7 +57,7 @@ def test_observe_roundtrip(home):
     assert st.get_element(99) is None
 
 
-def test_resolve_element_id(home):
+def test_resolve_element_id(home, live_window):
     _record()
     x, y, label = st.resolve_target("1")
     assert (x, y) == (110, 210)  # center of rect (100,200,20,20)
@@ -54,6 +68,41 @@ def test_resolve_element_stale(home):
     _record(ts=time.time() - 700)
     with pytest.raises(DeskctlError, match="stale"):
         st.resolve_target("1")
+
+
+def test_stale_id_window_gone(home, monkeypatch):
+    _record()
+    monkeypatch.setattr(win, "window_info", lambda h: None)
+    with pytest.raises(DeskctlError, match="window closed"):
+        st.resolve_target("1")
+
+
+def test_stale_id_window_moved(home, monkeypatch):
+    _record()
+    monkeypatch.setattr(win, "window_info", lambda h: _wininfo(rect=(0, 0, 200, 200)))
+    monkeypatch.setattr(win, "focused_hwnd", lambda: 42)
+    with pytest.raises(DeskctlError, match="moved/resized"):
+        st.resolve_target("1")
+
+
+def test_stale_id_refocuses(home, monkeypatch):
+    _record()
+    calls = []
+    monkeypatch.setattr(win, "window_info", lambda h: _wininfo())
+    monkeypatch.setattr(win, "focused_hwnd", lambda: 999)  # something else focused
+    monkeypatch.setattr(win, "set_foreground", lambda h: calls.append(h) or True)
+    x, y, _ = st.resolve_target("1")
+    assert calls == [42]
+    assert (x, y) == (110, 210)
+
+
+def test_stale_id_screen_observe_skips_checks(home, monkeypatch):
+    """screen observes (hwnd 0) don't run window freshness checks."""
+    _record(hwnd=0)
+    monkeypatch.setattr(win, "window_info", lambda h: None)
+    monkeypatch.setattr(win, "focused_hwnd", lambda: 0)
+    x, y, _ = st.resolve_target("1")
+    assert (x, y) == (110, 210)
 
 
 def test_resolve_unknown_id(home):

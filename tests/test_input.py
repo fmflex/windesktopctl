@@ -78,3 +78,26 @@ def test_utf16_units_for_type_text():
 
     units = struct.unpack(f"<{len(data) // 2}H", data)
     assert len(units) == 3  # 'a' + high surrogate + low surrogate
+
+
+def test_type_text_chunk_abort(monkeypatch):
+    """user_active callable -> abort mid-string with char counts."""
+    sent = []
+    monkeypatch.setattr(_in, "_send", lambda inputs: sent.append(len(inputs)))
+    text = "x" * 45  # 3 chunks of 20/20/5
+    calls = {"n": 0}
+
+    def user_active():
+        calls["n"] += 1
+        return calls["n"] >= 1  # active right after first chunk
+
+    with pytest.raises(DeskctlError, match="stopped after 20/45 chars"):
+        _in.type_text(text, user_active=user_active)
+    assert len(sent) == 1  # only the first chunk went out
+
+
+def test_type_text_no_abort_when_idle(monkeypatch):
+    sent = []
+    monkeypatch.setattr(_in, "_send", lambda inputs: sent.append(len(inputs)))
+    _in.type_text("x" * 45, user_active=lambda: False)
+    assert len(sent) == 3  # 20 + 20 + 5 chars -> 3 SendInput calls

@@ -90,6 +90,16 @@ def main() -> int:
         assert r.status_code != 401, "authenticated request still rejected"
         assert r.status_code == 200, r.status_code
 
+        # 4) valid token but evil Host header -> 421 (DNS rebinding protection)
+        r = httpx.post(
+            f"{BASE}/mcp", json=INIT,
+            headers={**HEADERS, "Authorization": f"Bearer {TOKEN}",
+                     "Host": "evil.example.com"},
+            timeout=10,
+        )
+        print("evil host     ->", r.status_code)
+        assert r.status_code == 421, r.status_code
+
         print("\nHTTP bearer check PASSED")
         return 0
     finally:

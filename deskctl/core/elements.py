@@ -17,6 +17,8 @@ MAX_TEXT = 80  # name/value truncation length
 _STRIP_CATEGORIES = frozenset({"Cc", "Cf", "Co"})
 
 # UIA control types (ControlTypeName minus the "Control" suffix) kept always.
+# "Scroll" is deskctl's own role for vertically/horizontally scrollable
+# containers that are not otherwise interactive.
 INTERACTIVE_TYPES = frozenset(
     {
         "Button",
@@ -34,7 +36,21 @@ INTERACTIVE_TYPES = frozenset(
         "DataItem",
         "Spinner",
         "Document",
+        "HeaderItem",
+        "Scroll",
     }
+)
+
+# Element state flags, in display order. Scroll containers carry "v=NN%" /
+# "h=NN%" flags instead (appended after these).
+FLAG_ORDER = (
+    "focused",
+    "disabled",
+    "checked",
+    "expanded",
+    "collapsed",
+    "selected",
+    "password",
 )
 
 _WS_RE = re.compile(r"\s+")
@@ -74,6 +90,7 @@ class Element:
     rect: tuple[int, int, int, int] = (0, 0, 0, 0)  # x, y, w, h (screen px)
     source: str = "uia"  # "uia" | "ocr"
     id: int = 0
+    flags: frozenset = frozenset()  # see FLAG_ORDER + "v=NN%"/"h=NN%"
 
     @property
     def cx(self) -> int:
@@ -86,14 +103,23 @@ class Element:
     def center(self) -> tuple[int, int]:
         return self.cx, self.cy
 
+    @property
+    def is_password(self) -> bool:
+        return "password" in self.flags
+
+    def effective_value(self) -> str:
+        """Value safe to display: always empty for password fields."""
+        return "" if self.is_password else self.value
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "role": self.role,
             "name": self.name,
-            "value": self.value,
+            "value": self.effective_value(),
             "rect": list(self.rect),
             "source": self.source,
+            "flags": sorted(self.flags),
         }
 
     @classmethod
@@ -105,6 +131,7 @@ class Element:
             rect=tuple(d.get("rect", [0, 0, 0, 0])),
             source=d.get("source", "uia"),
             id=int(d.get("id", 0)),
+            flags=frozenset(d.get("flags") or ()),
         )
 
 
@@ -126,15 +153,18 @@ def dedup(elements: list[Element]) -> list[Element]:
 
 
 def from_uia_records(records: list[dict]) -> list[Element]:
-    """Convert raw UIA walk records ({role,name,value,rect}) to Elements,
-    cleaning text and de-duplicating."""
+    """Convert raw UIA records ({role,name,value,rect,flags}) to Elements,
+    cleaning text and de-duplicating. Password values are never kept."""
     elems = []
     for r in records:
         role = r.get("role", "")
         name = clean_text(r.get("name", ""))
-        value = clean_text(r.get("value", ""))
+        flags = frozenset(r.get("flags") or ())
+        value = "" if "password" in flags else clean_text(r.get("value", ""))
         rect = tuple(int(v) for v in r.get("rect", (0, 0, 0, 0)))
-        elems.append(Element(role=role, name=name, value=value, rect=rect, source="uia"))
+        elems.append(
+            Element(role=role, name=name, value=value, rect=rect, source="uia", flags=flags)
+        )
     return dedup(elems)
 
 
@@ -146,10 +176,22 @@ def cap(elements: list[Element], max_elements: int) -> tuple[list[Element], int]
     return kept, max(0, len(elements) - len(kept))
 
 
+def format_flags(flags) -> str:
+    """Canonical flag ordering: FLAG_ORDER first, then scroll percents."""
+    fs = set(flags or ())
+    ordered = [f for f in FLAG_ORDER if f in fs]
+    ordered += sorted(f for f in fs if f not in FLAG_ORDER)
+    return " ".join(ordered)
+
+
 def format_element_line(e: Element) -> str:
     line = f'[{e.id}] {e.role} "{escape_text(e.name)}"'
-    if e.value:
-        line += f' ="{escape_text(e.value)}"'
+    value = e.effective_value()
+    if value:
+        line += f' ="{escape_text(value)}"'
+    flags = format_flags(e.flags)
+    if flags:
+        line += f" {flags}"
     line += f" @{e.cx},{e.cy}"
     return line
 

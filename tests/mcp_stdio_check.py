@@ -29,7 +29,8 @@ async def main() -> int:
             names = [t.name for t in tools.tools]
             print("tools:", names)
             expected = {"observe", "screenshot", "act", "windows", "focus",
-                        "wait_for_change", "pause", "resume", "status"}
+                        "wait_for", "window", "launch", "pause", "resume",
+                        "status"}
             missing = expected - set(names)
             if missing:
                 print("MISSING TOOLS:", missing)
@@ -42,6 +43,13 @@ async def main() -> int:
 
             r = await session.call_tool("observe", {"window": "focused", "max_elements": 40})
             print("\n--- observe ---")
+            for c in r.content:
+                print(getattr(c, "text", c))
+
+            r = await session.call_tool(
+                "wait_for", {"cond": "changed", "timeout": 1.0, "window": "focused"}
+            )
+            print("\n--- wait_for(changed,1s) ---")
             for c in r.content:
                 print(getattr(c, "text", c))
 

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from deskctl.core import DeskctlError
 from deskctl.core import elements as el
+from deskctl.core import windows as win
 
 OBSERVE_MAX_AGE = 600.0  # seconds; element ids older than this are stale
 SHOT_MAX_AGE = 600.0
@@ -162,6 +163,25 @@ def get_baseline() -> bytes | None:
 
 # -------------------------------------------------------------- act targets --
 
+def _check_observe_window_fresh(obs: dict) -> None:
+    """Stale-id protection for window observes (screen observes have hwnd 0):
+    window gone -> error; not foreground -> focus it; rect changed -> error."""
+    hwnd = int(obs.get("hwnd") or 0)
+    if not hwnd or obs.get("window") == "screen":
+        return
+    info = win.window_info(hwnd)
+    if info is None:
+        raise DeskctlError("window closed; observe again")
+    if win.focused_hwnd() != hwnd:
+        win.set_foreground(hwnd)
+        info = win.window_info(hwnd)
+        if info is None:
+            raise DeskctlError("window closed; observe again")
+    want = obs.get("rect")
+    if want is not None and [int(v) for v in info.rect] != [int(v) for v in want]:
+        raise DeskctlError("window moved/resized since observe; observe again")
+
+
 def resolve_target(spec: str) -> tuple[int, int, str]:
     """Resolve an act() target spec to screen coords.
 
@@ -180,6 +200,7 @@ def resolve_target(spec: str) -> tuple[int, int, str]:
         e = get_element(eid)
         if e is None:
             raise DeskctlError(f"unknown element id {eid} (not in last observe)")
+        _check_observe_window_fresh(obs)
         x, y = e.center()
         label = f'[{eid}] {e.role} "{e.name}"'.rstrip()
         return int(x), int(y), label

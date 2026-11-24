@@ -1,7 +1,9 @@
 """deskctl MCP server.
 
 Default: stdio transport (for `devin mcp add`). `--http` serves Streamable
-HTTP on 127.0.0.1 and requires DESKCTL_TOKEN (Bearer auth middleware).
+HTTP on 127.0.0.1 and requires DESKCTL_TOKEN (Bearer auth middleware) plus
+Host-header validation against DNS rebinding (--allowed-host extends the
+allowlist for tunnel hostnames).
 
 CRITICAL for stdio: nothing but the MCP protocol may touch stdout. The
 uiautomation package writes an @AutomationLog.txt and can print; we disable
@@ -38,19 +40,33 @@ deskctl controls the user's Windows desktop locally (no LLM inside).
 
 Workflow:
 - Call observe() FIRST to get a compact text map of on-screen UI elements
-  with numeric ids (accessibility tree; falls back to OCR when UIA sees
-  little). Prefer acting on element ids over raw coordinates.
+  with numeric ids (accessibility tree; OCR fallback when UIA sees little).
+  Prefer acting on element ids over raw coordinates. Element lines show
+  state flags (focused/disabled/checked/expanded/collapsed/selected/
+  password) and scroll containers appear as role "Scroll" with v=/h= percent.
+- Password fields never expose their value. Password-manager processes
+  (1Password, KeePass, Bitwarden, Enpass + DESKCTL_EXCLUDE) are never
+  observed; their rects are blacked out in screen captures.
+- Call observe(dom=True) for browser pages (chrome/msedge/brave/vivaldi/
+  opera/firefox) to get web-content elements instead of browser chrome.
 - Call screenshot() ONLY when observe() text is not enough. It returns an
   image plus info: image WxH, scale (screen px per image px), origin, and
   ~tokens estimate. To click something visible only in the image, use
   target "i:x,y" with image pixel coords.
 - act() performs click / double_click / right_click / move / drag / scroll /
   type / key. Targets: element id "12", screen coords "x,y", image coords
-  "i:x,y". All coordinates are physical screen pixels.
-- windows() lists top-level windows; focus() raises one; wait_for_change()
-  polls until the screen changes.
+  "i:x,y". scroll takes amount (+up/-down, or --horizontal) and drag takes
+  `to`. type aborts mid-way if you take over the PC.
+- wait_for() polls a condition: changed | text | window | element | gone.
+- windows() lists top-level windows; focus() raises one; window() does
+  minimize/maximize/restore/close/move/resize; launch() opens a URL, file,
+  or command and reports the new window.
 - Safety: pause() / resume() / status(); hotkey Ctrl+Alt+Shift+K toggles
-  pause; slamming the cursor into the top-left screen corner failsafes.
+  pause; slamming the cursor into the top-left screen corner failsafes;
+  physical keyboard/mouse input pauses automation briefly (takeover
+  detection) - retry when idle.
+- Element ids go stale if the window closes, moves, or resizes - observe()
+  again after acting.
 - After acting, observe() again to verify the result instead of assuming.
 """
 
@@ -89,15 +105,31 @@ class BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-def create_server():
+def _env_tool_filter() -> set[str] | None:
+    """DESKCTL_TOOLS: comma-separated allowlist of tool names (None = all)."""
+    raw = os.environ.get("DESKCTL_TOOLS", "").strip()
+    if not raw:
+        return None
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] | None = None):
     _silence_uiautomation()
     from mcp.server.fastmcp import FastMCP
+    from mcp.server.transport_security import TransportSecuritySettings
 
     from deskctl.core import DeskctlError
     from deskctl.core import api
     from deskctl.core import worker
 
-    mcp = FastMCP("deskctl", instructions=INSTRUCTIONS)
+    ts = None
+    if allowed_hosts is not None:
+        ts = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=list(allowed_hosts),
+        )
+
+    mcp = FastMCP("deskctl", instructions=INSTRUCTIONS, transport_security=ts)
 
     def _call(fn, *args):
         return worker.submit(fn, *args).result()
@@ -109,19 +141,23 @@ def create_server():
     def _err(e: DeskctlError) -> str:
         return f"error: {e}"
 
-    @mcp.tool()
-    async def observe(window: str = "focused", mode: str = "auto", max_elements: int = 150) -> str:
+    async def observe(
+        window: str = "focused",
+        mode: str = "auto",
+        max_elements: int = 150,
+        dom: bool = False,
+    ) -> str:
         """Observe the desktop as compact text: numbered UI elements with
-        roles, names, values, and screen-pixel centers. Call this FIRST before
-        acting. window: "focused" | hwnd | title substring | "screen".
+        roles, names, values, state flags, and screen-pixel centers. Call this
+        FIRST before acting. window: "focused" | hwnd | title | "screen".
         mode: auto | uia | ocr | both. max_elements caps the list (rest are
-        reported as truncated). Returns element ids usable as act() targets."""
+        reported as truncated). dom=True observes only web content in
+        supported browsers. Returns element ids usable as act() targets."""
         try:
-            return await _acall(api.observe, window, mode, max_elements)
+            return await _acall(api.observe, window, mode, max_elements, dom)
         except DeskctlError as e:
             return _err(e)
 
-    @mcp.tool()
     async def screenshot(
         target: str = "focused",
         max_width: int = 1280,
@@ -132,7 +168,8 @@ def create_server():
         set-of-marks boxes for last observe()'s elements). Returns the image
         plus an info line with scale/origin/~tokens. Use ONLY when observe()
         text is insufficient; then act on image coords via "i:x,y" targets.
-        target: "focused" | "screen" | hwnd | "x,y,w,h"; fmt: png | jpeg."""
+        target: "focused" | "screen" | hwnd | title | "x,y,w,h";
+        fmt: png | jpeg."""
         from mcp.server.fastmcp import Image
 
         try:
@@ -141,7 +178,6 @@ def create_server():
             return _err(e)
         return [Image(data=data, format=fmt), info]
 
-    @mcp.tool()
     async def act(
         action: str,
         target: str | None = None,
@@ -149,20 +185,23 @@ def create_server():
         keys: str | None = None,
         amount: float | None = None,
         to: str | None = None,
+        horizontal: bool = False,
     ) -> str:
         """Perform a desktop action and report whether the screen changed.
         action: click | double_click | right_click | move | drag | scroll |
         type | key. target: element id "12" | screen coords "x,y" | image
         coords "i:x,y" (from last screenshot). drag also needs `to`.
-        scroll needs `amount` (+up/-down notches), optional target.
-        type needs `text`; key needs `keys` (one combo, e.g. "ctrl+s",
+        scroll needs `amount` (+up/-down notches; horizontal=True for
+        left/right), optional target. type needs `text` (aborts if the user
+        takes over); key needs `keys` (one combo, e.g. "ctrl+s",
         "alt+tab", "enter", "f5", "win+r")."""
         try:
-            return await _acall(api.act, action, target, text, keys, amount, to)
+            return await _acall(
+                api.act, action, target, text, keys, amount, to, horizontal
+            )
         except DeskctlError as e:
             return _err(e)
 
-    @mcp.tool()
     async def windows() -> str:
         """List top-level visible windows: hwnd, title, process, rect,
         [focused] marker. Use with focus(hwnd_or_title)."""
@@ -171,25 +210,56 @@ def create_server():
         except DeskctlError as e:
             return _err(e)
 
-    @mcp.tool()
     async def focus(window: str) -> str:
-        """Focus a window by hwnd or title substring."""
+        """Focus a window by hwnd or title (exact match wins, else unique
+        substring)."""
         try:
             return await _acall(api.focus, window)
         except DeskctlError as e:
             return _err(e)
 
-    @mcp.tool()
-    async def wait_for_change(timeout: float = 10.0, target: str = "focused") -> str:
-        """Poll until the captured region changes or timeout expires.
-        Returns e.g. 'changed after 1.2s' or 'no change in 10s'.
-        target: "focused" | "screen" | hwnd | "x,y,w,h"."""
+    async def wait_for(
+        cond: str = "changed",
+        value: str | None = None,
+        timeout: float = 10.0,
+        window: str = "focused",
+    ) -> str:
+        """Poll until a condition is met (~300ms). cond: changed (screen
+        diff), text (substring in element name/value), window (foreground
+        title contains value), element ("Role:name-sub" or "name-sub"),
+        gone (text/element no longer present). text/element success refreshes
+        the element map and returns matching lines. Timeout is not an error:
+        "timeout after Ns: <cond> not met"."""
         try:
-            return await _acall(api.wait_for_change, timeout, target)
+            return await _acall(api.wait_for, cond, value, timeout, window)
         except DeskctlError as e:
             return _err(e)
 
-    @mcp.tool()
+    async def window(
+        action: str,
+        window: str = "focused",
+        x: int | None = None,
+        y: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> str:
+        """Window management: minimize | maximize | restore | close (WM_CLOSE)
+        | move (needs x,y) | resize (needs width,height). Subject to the same
+        safety gate as act()."""
+        try:
+            return await _acall(api.window, action, window, x, y, width, height)
+        except DeskctlError as e:
+            return _err(e)
+
+    async def launch(target: str) -> str:
+        """Launch a URL, existing file path, or command (shlex-split, no
+        shell). Waits up to 10s for a new top-level window and returns its
+        windows() line, or "launched; no new window detected"."""
+        try:
+            return await _acall(api.launch, target)
+        except DeskctlError as e:
+            return _err(e)
+
     async def pause() -> str:
         """Pause all deskctl actions (also toggled by Ctrl+Alt+Shift+K)."""
         try:
@@ -197,7 +267,6 @@ def create_server():
         except DeskctlError as e:
             return _err(e)
 
-    @mcp.tool()
     async def resume() -> str:
         """Resume actions after pause()."""
         try:
@@ -205,15 +274,61 @@ def create_server():
         except DeskctlError as e:
             return _err(e)
 
-    @mcp.tool()
     async def status() -> str:
-        """Safety/status info: paused state, hotkey, state freshness."""
+        """Safety/status info: paused state, hotkey, takeover detection,
+        state freshness."""
         try:
             return await _acall(api.status)
         except DeskctlError as e:
             return _err(e)
 
+    tool_fns = {
+        "observe": observe,
+        "screenshot": screenshot,
+        "act": act,
+        "windows": windows,
+        "focus": focus,
+        "wait_for": wait_for,
+        "window": window,
+        "launch": launch,
+        "pause": pause,
+        "resume": resume,
+        "status": status,
+    }
+
+    allow = tool_names if tool_names is not None else _env_tool_filter()
+    known = set(tool_fns)
+    for name, fn in tool_fns.items():
+        if allow is not None and name not in allow:
+            continue
+        mcp.tool()(fn)
+    if allow is not None:
+        unknown = allow - known
+        if unknown:
+            print(
+                f"deskctl-mcp: DESKCTL_TOOLS names unknown tools, ignored: {sorted(unknown)}",
+                file=sys.stderr,
+                flush=True,
+            )
+
     return mcp
+
+
+def _http_allowed_hosts(host: str, extra: list[str]) -> list[str]:
+    """Host-header allowlist: 127.0.0.1, localhost, the bind host - each with
+    and without a port wildcard - plus any --allowed-host entries."""
+    bases = ["127.0.0.1", "localhost"]
+    if host and host not in bases:
+        bases.append(host)
+    out: list[str] = []
+    for b in bases:
+        for entry in (b, f"{b}:*"):
+            if entry not in out:
+                out.append(entry)
+    for e in extra:
+        if e not in out:
+            out.append(e)
+    return out
 
 
 def main(argv=None) -> int:
@@ -223,13 +338,21 @@ def main(argv=None) -> int:
     ap.add_argument("--http", action="store_true", help="serve Streamable HTTP instead of stdio")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        metavar="HOST[:PORT|*]",
+        help="extra allowed Host header (repeatable; for tunnel hostnames)",
+    )
     args = ap.parse_args(argv)
 
     from deskctl.core import safety
 
     safety.start_hotkey_guard()
 
-    server = create_server()
+    allowed_hosts = _http_allowed_hosts(args.host, args.allowed_host) if args.http else None
+    server = create_server(allowed_hosts=allowed_hosts)
 
     if args.http:
         token = os.environ.get("DESKCTL_TOKEN", "").strip()

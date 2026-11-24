@@ -2,13 +2,15 @@
 
     .venv\\Scripts\\python tests\\smoke_live.py
 
-Read-only part always runs (windows, observe uia/ocr, screenshot, wait).
-Input part runs ONLY if no Notepad process is already running; it launches
-its own notepad.exe, verifies foreground before typing, and closes only the
-window it launched.
+Read-only part always runs (windows, observe uia/ocr, screenshot, wait_for).
+Input part runs ONLY if no Notepad process is already running; it uses
+api.launch to start its own notepad.exe, verifies foreground before typing,
+checks the focused flag, and closes via api.window + a deskctl Don't-Save
+click.
 """
 
 import ctypes
+import re
 import subprocess
 import sys
 import time
@@ -91,8 +93,13 @@ def verify_text_present(text="hello from deskctl", min_chars=15):
 
 
 def close_window(hwnd):
-    """WM_CLOSE the window; if a save prompt appears, click Don't Save."""
-    user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+    """api.window close (WM_CLOSE); if a save prompt appears, click Don't
+    Save through deskctl itself."""
+    try:
+        run(api.window, "close", str(hwnd))
+    except Exception as ex:
+        print("window close failed, falling back to PostMessageW:", ex)
+        user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
     for _ in range(20):
         time.sleep(0.4)
         alive = any(w.hwnd == hwnd for w in win.list_windows())
@@ -120,26 +127,28 @@ def input_test():
               "not touching it to stay safe")
         return 0
 
-    proc = subprocess.Popen(["notepad.exe"])
-    our_pid = proc.pid
-    hwnd = 0
-    title = ""
-    for _ in range(60):
-        time.sleep(0.25)
+    out = run(api.launch, "notepad.exe")
+    print("launch:", out)
+    m = re.search(r"hwnd=(\d+)", out)
+    hwnd = int(m.group(1)) if m else 0
+    if not hwnd:
+        # launch may have missed the window; look for any notepad window
         for w in win.list_windows():
             if "notepad" in (w.process or "").lower() and w.title:
-                hwnd, title = w.hwnd, w.title
+                hwnd = w.hwnd
                 break
-        if hwnd:
-            break
     if not hwnd:
-        print("FAIL: notepad window never appeared")
-        proc.terminate()
+        print("FAIL: launch did not produce a notepad window")
         return 1
-    print(f"launched notepad pid={our_pid} hwnd={hwnd} title={title!r}")
+    info = win.window_info(hwnd)
+    title = info.title if info else "?"
+    pid = info.pid if info else 0
+    print(f"launched notepad pid={pid} hwnd={hwnd} title={title!r}")
 
     try:
         print(run(api.focus, str(hwnd)))
+        # wait_for(window, ...) should see the notepad title in foreground
+        print(run(api.wait_for, "window", "notepad", 10.0, "focused"))
         time.sleep(1.0)  # let session/tab restore settle before typing
         fg = win.focused_hwnd()
         if fg != hwnd:
@@ -173,6 +182,18 @@ def input_test():
             print("focused control:", run(_focused))
         except Exception as ex:
             print("focused-control check failed:", ex)
+
+        # the clicked editor should now carry the `focused` flag
+        run(api.observe, "focused", "auto", 120)
+        obs = st.get_observe()
+        focused_hit = None
+        for eid2, d in (obs.get("elements") or {}).items():
+            if "focused" in (d.get("flags") or []):
+                focused_hit = (eid2, d.get("role"), d.get("name"))
+        print("focused-flag element:", focused_hit)
+        if focused_hit is None:
+            print("WARN: no element shows the focused flag")
+
         print(run(api.act, "type", None, "hello from deskctl"))
         time.sleep(0.3)
         print(run(api.act, "key", None, None, "ctrl+a"))
@@ -185,21 +206,25 @@ def input_test():
             print("FAIL: typed text not found in observe")
             print(detail)
 
-        print("closing notepad window (WM_CLOSE + Don't Save if prompted)...")
+        print("closing notepad window (api.window close + Don't Save if prompted)...")
         closed = close_window(hwnd)
         print("closed:", closed)
         # final safety: only kill the process we launched, by pid
         still = [w for w in win.list_windows() if w.hwnd == hwnd]
-        if still:
-            print("WARN: window still present; terminating our pid", our_pid)
+        if still and pid:
+            print("WARN: window still present; terminating our pid", pid)
             try:
-                proc.terminate()
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               capture_output=True)
             except Exception as ex:
                 print("terminate failed:", ex)
         return 0 if ok else 1
     finally:
+        # safety net: if we bailed early, don't leave our notepad open
         try:
-            proc.poll()
+            if hwnd and any(w.hwnd == hwnd for w in win.list_windows()):
+                print("cleanup: closing leftover notepad window", hwnd)
+                close_window(hwnd)
         except Exception:
             pass
 
@@ -213,7 +238,7 @@ def main():
     p = st.state_dir() / "smoke_last.png"
     p.write_bytes(data)
     print(f"\n===== screenshot =====\n{info}\nsaved: {p}")
-    timed("wait_for_change(1s)", api.wait_for_change, 1.0, "focused")
+    timed("wait_for(changed, 1s)", api.wait_for, "changed", None, 1.0, "focused")
     rc = input_test()
     print("\n== smoke_live done ==")
     return rc

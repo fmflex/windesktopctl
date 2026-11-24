@@ -49,6 +49,12 @@ kernel32.QueryFullProcessImageNameW.argtypes = [
 ]
 kernel32.CloseHandle.restype = wt.BOOL
 kernel32.CloseHandle.argtypes = [wt.HANDLE]
+user32.PostMessageW.restype = wt.BOOL
+user32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+user32.SetWindowPos.restype = wt.BOOL
+user32.SetWindowPos.argtypes = [
+    wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.UINT
+]
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
 user32.EnumWindows.restype = wt.BOOL
@@ -56,6 +62,11 @@ user32.EnumWindows.argtypes = [WNDENUMPROC, wt.LPARAM]
 
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _SW_RESTORE = 9
+_SW_MAXIMIZE = 3
+_SW_MINIMIZE = 6
+_WM_CLOSE = 0x0010
+_SWP_NOZORDER = 0x0004
+_SWP_NOACTIVATE = 0x0010
 
 
 class WindowInfo:
@@ -194,3 +205,29 @@ def set_foreground(hwnd: int) -> bool:
 
     time.sleep(0.15)
     return int(user32.GetForegroundWindow() or 0) == hwnd
+
+
+# ----------------------------------------------------------- window actions --
+
+def show_window(hwnd: int, cmd: int) -> bool:
+    """ShowWindow: SW_MINIMIZE(6)/SW_MAXIMIZE(3)/SW_RESTORE(9)."""
+    return bool(user32.ShowWindow(int(hwnd), int(cmd)))
+
+
+def close_window(hwnd: int) -> bool:
+    """Polite close via WM_CLOSE (app may prompt to save)."""
+    return bool(user32.PostMessageW(int(hwnd), _WM_CLOSE, 0, 0))
+
+
+def set_window_rect(hwnd: int, x: int, y: int, w: int, h: int) -> bool:
+    """Move/resize without changing z-order or activating. Restores first if
+    the window is minimized."""
+    hwnd = int(hwnd)
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, _SW_RESTORE)
+        time.sleep(0.1)
+    return bool(
+        user32.SetWindowPos(
+            hwnd, None, int(x), int(y), int(w), int(h), _SWP_NOZORDER | _SWP_NOACTIVATE
+        )
+    )

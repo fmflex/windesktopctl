@@ -112,3 +112,56 @@ def test_element_dict_roundtrip():
     assert e2.role == "Edit" and e2.name == "n" and e2.value == "v"
     assert e2.rect == (1, 2, 3, 4) and e2.source == "ocr" and e2.id == 9
     assert e2.center() == (2, 4)
+
+
+def test_format_flags_order_and_scroll():
+    assert el.format_flags(frozenset({"disabled", "focused", "checked"})) == (
+        "focused disabled checked"
+    )
+    assert el.format_flags(frozenset({"v=40%", "selected"})) == "selected v=40%"
+    assert el.format_flags(frozenset()) == ""
+    assert el.format_flags(None) == ""
+
+
+def test_format_element_line_flags():
+    e = el.Element(
+        role="CheckBox", name="Word wrap", rect=(110, 290, 20, 20),
+        flags=frozenset({"checked"}),
+    )
+    e.id = 4
+    assert el.format_element_line(e) == '[4] CheckBox "Word wrap" checked @120,300'
+    e2 = el.Element(
+        role="Scroll", name="list", rect=(0, 0, 100, 100),
+        flags=frozenset({"v=40%"}),
+    )
+    e2.id = 5
+    assert el.format_element_line(e2) == '[5] Scroll "list" v=40% @50,50'
+
+
+def test_password_value_never_emitted():
+    # even if a raw record carries a value, a password-flagged element drops it
+    recs = [
+        {"role": "Edit", "name": "pw", "value": "hunter2", "rect": (0, 0, 10, 10),
+         "flags": ["password"]},
+        {"role": "Edit", "name": "user", "value": "bob", "rect": (0, 20, 10, 10),
+         "flags": []},
+    ]
+    elems = el.from_uia_records(recs)
+    pw = next(e for e in elems if e.name == "pw")
+    assert pw.value == ""
+    assert pw.effective_value() == ""
+    assert "hunter2" not in pw.to_dict()["value"]
+    assert pw.to_dict()["flags"] == ["password"]
+    line = el.format_element_line(pw)
+    assert "hunter2" not in line
+    other = next(e for e in elems if e.name == "user")
+    assert other.value == "bob"
+
+
+def test_flags_roundtrip():
+    e = el.Element(role="Button", name="x", rect=(0, 0, 1, 1),
+                   flags=frozenset({"focused", "disabled"}))
+    e.id = 1
+    e2 = el.Element.from_dict(e.to_dict())
+    assert e2.flags == frozenset({"focused", "disabled"})
+    assert "focused" in el.format_element_line(e2)

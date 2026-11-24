@@ -10,8 +10,10 @@ from deskctl.core import safety
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("DESKCTL_HOME", str(tmp_path / "deskctl"))
-    return tmp_path / "deskctl"
+    d = tmp_path / "deskctl"
+    d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DESKCTL_HOME", str(d))
+    return d
 
 
 def test_failsafe_corner_primary_at_origin(monkeypatch):
@@ -65,3 +67,58 @@ def test_check_before_action_ok(home, monkeypatch):
     monkeypatch.setattr(dpi, "virtual_screen", lambda: (0, 0, 100, 100))
     monkeypatch.setattr(_in, "cursor_pos", lambda: (50, 50))
     safety.check_before_action()  # should not raise
+
+
+# ------------------------------------------------------------- takeover --
+
+def _reset_takeover(monkeypatch):
+    monkeypatch.setattr(safety, "_user_active_until", 0.0)
+    monkeypatch.setattr(safety, "_last_user_event", 0.0)
+
+
+def test_takeover_file_marks_active(home, monkeypatch):
+    import time as _t
+
+    _reset_takeover(monkeypatch)
+    (home / "user_active").write_text(repr(_t.time() + 60))
+    assert safety.is_user_active()
+    monkeypatch.setattr(_in, "cursor_pos", lambda: (50, 50))
+    with pytest.raises(DeskctlError, match="user is using the PC"):
+        safety.check_before_action()
+
+
+def test_takeover_file_expired(home, monkeypatch):
+    import time as _t
+
+    _reset_takeover(monkeypatch)
+    (home / "user_active").write_text(repr(_t.time() - 60))
+    assert not safety.is_user_active()
+
+
+def test_takeover_inprocess_mark(home, monkeypatch):
+    _reset_takeover(monkeypatch)
+    monkeypatch.setattr(safety, "idle_seconds", lambda: 3.0)
+    safety._mark_user_active()
+    assert safety.is_user_active()
+    monkeypatch.setattr(_in, "cursor_pos", lambda: (50, 50))
+    with pytest.raises(DeskctlError, match="user is using"):
+        safety.check_user_takeover()
+
+
+def test_takeover_heartbeat_live(home, monkeypatch):
+    import time as _t
+
+    _reset_takeover(monkeypatch)
+    (home / "guard_heartbeat").write_text(repr(_t.time()))
+    assert safety.takeover_live()
+    assert "live" in safety.takeover_status()
+    (home / "guard_heartbeat").write_text(repr(_t.time() - 60))
+    assert not safety.takeover_live()
+    assert "off" in safety.takeover_status()
+
+
+def test_takeover_idle_seconds_env(home, monkeypatch):
+    monkeypatch.setenv("DESKCTL_IDLE_SECONDS", "7")
+    assert safety.idle_seconds() == 7.0
+    monkeypatch.setenv("DESKCTL_IDLE_SECONDS", "bogus")
+    assert safety.idle_seconds() == 3.0

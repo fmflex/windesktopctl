@@ -70,6 +70,7 @@ MOUSEEVENTF_RIGHTUP = 0x0010
 MOUSEEVENTF_MIDDLEDOWN = 0x0020
 MOUSEEVENTF_MIDDLEUP = 0x0040
 MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_HWHEEL = 0x1000
 MOUSEEVENTF_ABSOLUTE = 0x8000
 MOUSEEVENTF_VIRTUALDESK = 0x4000
 
@@ -187,19 +188,26 @@ def drag(x1: int, y1: int, x2: int, y2: int, steps: int = 12) -> None:
         _send([_mi(0, 0, 0, MOUSEEVENTF_LEFTUP)])
 
 
-def scroll(amount: float, x: int | None = None, y: int | None = None) -> None:
-    """Scroll wheel; positive amount = up/away, negative = down/toward.
-    amount is in wheel notches (~120 delta units each)."""
+def scroll(
+    amount: float,
+    x: int | None = None,
+    y: int | None = None,
+    horizontal: bool = False,
+) -> None:
+    """Scroll wheel; positive amount = up/away (or right when horizontal),
+    negative = down/toward (or left). amount is in wheel notches (~120 delta
+    units each)."""
     if x is not None and y is not None:
         move_to(int(x), int(y))
         time.sleep(0.02)
+    flag = MOUSEEVENTF_HWHEEL if horizontal else MOUSEEVENTF_WHEEL
     remaining = int(round(float(amount) * WHEEL_DELTA))
     if remaining == 0:
         raise DeskctlError("scroll amount too small")
     sign = 1 if remaining > 0 else -1
     while remaining:
         d = sign * min(120, abs(remaining))
-        _send([_mi(0, 0, d, MOUSEEVENTF_WHEEL)])
+        _send([_mi(0, 0, d, flag)])
         remaining -= d
 
 
@@ -396,17 +404,27 @@ def press_combo(combo: str) -> None:
     _send(seq)
 
 
-def type_text(text: str) -> None:
-    """Type arbitrary text via KEYEVENTF_UNICODE (handles any Unicode)."""
+def type_text(text: str, user_active=None) -> None:
+    """Type arbitrary text via KEYEVENTF_UNICODE (handles any Unicode).
+
+    Types in ~20-char chunks; if ``user_active`` (a callable returning bool)
+    reports the user took over between chunks, aborts with
+    "stopped after N/M chars: user took over".
+    """
     try:
         data = str(text).encode("utf-16-le")
     except UnicodeEncodeError:
         data = str(text).encode("utf-16-le", "replace")
     units = struct.unpack(f"<{len(data) // 2}H", data)
-    chunk = 256  # chars per SendInput call
-    for i in range(0, len(units), chunk):
+    total = len(units)
+    chunk = 20  # chars per SendInput call
+    sent = 0
+    for i in range(0, total, chunk):
         seq: list[INPUT] = []
         for u in units[i : i + chunk]:
             seq.append(_ki(0, u, KEYEVENTF_UNICODE))
             seq.append(_ki(0, u, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
         _send(seq)
+        sent = min(total, i + chunk)
+        if user_active is not None and sent < total and user_active():
+            raise DeskctlError(f"stopped after {sent}/{total} chars: user took over")
