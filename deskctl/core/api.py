@@ -216,12 +216,8 @@ def _uia_elements(hwnd: int, rect, dom: bool = False):
 def _changed_and_store_baseline(img: Image.Image) -> bool:
     t = diff.thumb(img)
     prev = st.get_baseline()
-    if prev is None:
-        changed = True
-        prev_img = None
-    else:
-        prev_img = diff.from_bytes(prev)
-        changed = diff.changed(t, prev_img)
+    prev_img = diff.from_bytes(prev) if prev is not None else None
+    changed = prev_img is None or diff.changed(t, prev_img)
     st.set_baseline(diff.to_bytes(t))
     return changed
 
@@ -476,9 +472,20 @@ def screenshot(target="focused", max_width=1280, marks=True, fmt="png"):
 
 # -------------------------------------------------------------------- act --
 
-def _screen_thumb():
+def _act_region() -> tuple[int, int, int, int]:
+    """Rect diffed around an act(): the foreground window (better resolution
+    than the whole virtual screen), falling back to the virtual screen."""
+    hwnd = win.focused_hwnd()
+    info = win.window_info(hwnd) if hwnd else None
+    if info is not None and not info.iconic and info.rect[2] > 0 and info.rect[3] > 0:
+        return info.rect
+    vx, vy, vw, vh = dpi.virtual_screen()
+    return (vx, vy, vw, vh)
+
+
+def _region_thumb(rect) -> Image.Image | None:
     try:
-        img, _ = capture.grab_virtual_screen()
+        img, _ = capture.grab_rect(*rect)
         return diff.thumb(img)
     except Exception:
         return None
@@ -559,11 +566,12 @@ def act(
     a = str(action).strip().lower().replace("-", "_")
     safety.check_before_action()
 
-    before = _screen_thumb()
+    rect = _act_region()
+    before = _region_thumb(rect)
     msg, xy, extra = _do_act(a, target, text, keys, amount, to, bool(horizontal))
 
     time.sleep(ACT_SETTLE)
-    after = _screen_thumb()
+    after = _region_thumb(rect)
     if before is None or after is None:
         changed = True
     else:
