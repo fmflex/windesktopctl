@@ -1,6 +1,6 @@
 """windesktopctl MCP server.
 
-Default: stdio transport (for `devin mcp add`). `--http` serves Streamable
+Default: stdio transport (for stdio MCP clients). `--http` serves Streamable
 HTTP on 127.0.0.1 and requires WINDESKTOPCTL_TOKEN (Bearer auth middleware) plus
 Host-header validation against DNS rebinding (--allowed-host extends the
 allowlist for tunnel hostnames).
@@ -82,7 +82,8 @@ Workflow:
   lettered cells like "B3 C4"; text, or both). act()/window()/
   browser tab|navigate refuse on challenge pages until it clears; only
   challenge_answer() may input there. If you want per-answer human approval,
-  set a Devin permission "ask" rule on challenge_answer.
+  set your MCP client's per-tool approval setting on challenge_answer, if
+  it has one.
 - SHELL/FILE TOOLS (when enabled - see config.toml and the strong-token
   rule for HTTP mode): exec runs powershell (default) or cmd commands -
   a FULL shell, NOT confined to file_roots, with no stdin (pass
@@ -1038,7 +1039,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
     }
 
     # HTTP mode requires a strong bearer token before shell/file tools are
-    # exposed; stdio (local Devin) always registers them - config.toml and
+    # exposed; stdio (local client) always registers them - config.toml and
     # pause still gate every call.
     register_new = True
     if allowed_hosts is not None:
