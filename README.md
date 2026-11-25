@@ -1,4 +1,4 @@
-# deskctl
+# windesktopctl
 
 Local Windows desktop helper that lets an LLM agent (e.g. Devin) **observe and
 control the user's desktop cheaply**. It reads the UI as **text first**
@@ -12,67 +12,124 @@ Exposed two ways with the same operations:
 
 - an **MCP server** (stdio by default, optional Streamable HTTP) for agents
   that speak MCP;
-- a **CLI** (`deskctl ...`, `--json` for structured output) so a remote agent
+- a **CLI** (`windesktopctl ...`, `--json` for structured output) so a remote agent
   that can only run shell commands can drive the desktop.
 
 All coordinates are physical virtual-screen pixels. Element ids, the last
 screenshot mapping, and the diff baseline persist in
-`%LOCALAPPDATA%\deskctl\state.json`, so ids are shared across CLI/MCP calls
+`%LOCALAPPDATA%\windesktopctl\state.json`, so ids are shared across CLI/MCP calls
 and processes (stale after 10 minutes, or immediately if the window closes,
 moves, or resizes).
 
 ## Install
 
 ```powershell
-cd C:\Users\funkm\repo\deskctl
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -e .
+cd C:\path\to\windesktopctl
+.\scripts\install.ps1        # finds Python >=3.11, makes .venv, pip install -e .
 ```
 
-## Register with Devin (MCP, stdio)
+## Run modes
+
+### 1. Local Devin (stdio, recommended)
 
 ```powershell
-devin mcp add deskctl -- C:\Users\funkm\repo\deskctl\.venv\Scripts\deskctl-mcp.exe
+devin mcp add -s user windesktopctl -- C:\path\to\windesktopctl\.venv\Scripts\windesktopctl-mcp.exe
 ```
 
 The server starts the `Ctrl+Alt+Shift+K` pause hotkey and the input-takeover
-guard automatically.
+guard automatically. No network exposure at all.
+
+### 2. Another PC over your tailnet (private)
+
+On the PC running windesktopctl:
+
+```powershell
+.\start.cmd -Expose tailnet        # = windesktopctl serve --expose tailnet
+```
+
+It binds `127.0.0.1:8765`, runs `tailscale serve --bg 8765` (HTTPS on :443,
+tailnet-only), prints the URL `https://<your-pc>.<tailnet>.ts.net/mcp` and a
+ready-to-paste MCP config JSON. Put that JSON (with `Authorization: Bearer
+<token>`) into the **other machine's** Devin MCP config. Ctrl+C stops the
+server AND turns the tailscale exposure back off.
+
+### 3. Devin Cloud via Funnel (public internet)
+
+```powershell
+.\start.cmd -Expose funnel -ShowToken -Copy
+```
+
+Same as tailnet but `tailscale funnel` exposes it publicly. First-time use
+needs Funnel enabled once in the Tailscale admin console (the CLI prints the
+`login.tailscale.com/f/funnel?node=…` link). **This is PUBLIC on the
+internet, protected only by the bearer token** — the banner says so too.
+Ctrl+C stops exposure.
+
+Note: cloud sessions use MCP connections configured in the Devin web app;
+we haven't verified the exact UI for adding a remote MCP server there —
+check Devin's docs/settings for "MCP servers" and paste the same JSON block.
+
+All serve modes share: token auth (below), Host-header validation,
+`windesktopctl pause`/takeover/failsafe still apply, and `windesktopctl-mcp
+--http` remains available for manual setups.
+
+## Token management
+
+The bearer token lives in `%LOCALAPPDATA%\windesktopctl\token` (created on
+first use, ACL-restricted to your user). `WINDESKTOPCTL_TOKEN` env var
+overrides the file when set.
+
+```powershell
+windesktopctl token              # masked token + file path
+windesktopctl token --show       # full token
+windesktopctl token --rotate     # new token; live-reloads, no restart needed
+```
+
+`serve`/`--http` re-check the token file on every request, so `--rotate`
+locks out old clients immediately. More than 10 failed auths in 60s -> HTTP
+429 for 60s (failures logged with client address + Host, never the token).
+
+## Safety / kill switch
 
 ## CLI examples
 
 ```powershell
-deskctl windows                        # list top-level windows
-deskctl observe --window focused       # text map of UI elements (ids [1]..[N])
-deskctl observe --window notepad --mode ocr
-deskctl observe --window chrome --dom  # browser page content only
-deskctl --json observe                 # structured JSON instead of text
-deskctl screenshot --target focused --max-width 1280   # saves last.png + info line
-deskctl click 12                       # click element id from last observe
-deskctl click 840,612                  # or raw screen coords
-deskctl click i:640,360                # or coords on the last screenshot image
-deskctl type "hello from deskctl"      # aborts mid-way if you take over
-deskctl key ctrl+s
-deskctl drag 100,100 400,300
-deskctl scroll -3 840,612
-deskctl scroll 2 --horizontal         # side-scroll
-deskctl focus notepad
-deskctl window minimize notepad
-deskctl window move notepad --x 100 --y 100
-deskctl launch notepad.exe
-deskctl launch "https://example.com"
-deskctl wait --for text --value "Save" --timeout 10
-deskctl wait --for element --value "Button:OK"
-deskctl wait --for changed --timeout 5
-deskctl browser info chrome               # title, URL, tabs for a browser window
-deskctl browser tabs chrome
-deskctl browser tab 2 chrome              # or a title substring
-deskctl browser text chrome --max-chars 4000   # whole page incl. offscreen
-deskctl browser navigate "https://example.com" chrome
-deskctl challenge chrome                  # grid-overlay PNG for a human check
-deskctl challenge-answer 3 --cells "B3 C4"      # relay the user's exact reply
-deskctl challenge-answer 3 --text "K7Q2-X9" --enter
-deskctl pause / deskctl resume / deskctl status
-deskctl guard                         # foreground hotkey + takeover guard (CLI-only)
+windesktopctl windows                        # list top-level windows
+windesktopctl observe --window focused       # text map of UI elements (ids [1]..[N])
+windesktopctl observe --window notepad --mode ocr
+windesktopctl observe --window chrome --dom  # browser page content only
+windesktopctl --json observe                 # structured JSON instead of text
+windesktopctl screenshot --target focused --max-width 1280   # saves last.png + info line
+windesktopctl click 12                       # click element id from last observe
+windesktopctl click 840,612                  # or raw screen coords
+windesktopctl click i:640,360                # or coords on the last screenshot image
+windesktopctl type "hello from windesktopctl"      # aborts mid-way if you take over
+windesktopctl key ctrl+s
+windesktopctl drag 100,100 400,300
+windesktopctl scroll -3 840,612
+windesktopctl scroll 2 --horizontal         # side-scroll
+windesktopctl focus notepad
+windesktopctl window minimize notepad
+windesktopctl window move notepad --x 100 --y 100
+windesktopctl launch notepad.exe
+windesktopctl launch "https://example.com"
+windesktopctl wait --for text --value "Save" --timeout 10
+windesktopctl wait --for element --value "Button:OK"
+windesktopctl wait --for changed --timeout 5
+windesktopctl browser info chrome               # title, URL, tabs for a browser window
+windesktopctl browser tabs chrome
+windesktopctl browser tab 2 chrome              # or a title substring
+windesktopctl browser text chrome --max-chars 4000   # whole page incl. offscreen
+windesktopctl browser navigate "https://example.com" chrome
+windesktopctl challenge chrome                  # grid-overlay PNG for a human check
+windesktopctl challenge --region "C4:I10" --grid 4x4 chrome   # zoom into tiles, numbered
+windesktopctl challenge-answer 3 --cells "3 8 14"      # relay the user's exact reply
+windesktopctl challenge-answer 3 --cells "B3 C4"       # lettered grids
+windesktopctl challenge-answer 3 --text "K7Q2-X9" --enter
+windesktopctl token [--show|--rotate]           # HTTP bearer token
+windesktopctl serve --expose tailnet --port 8765 --copy
+windesktopctl pause / windesktopctl resume / windesktopctl status
+windesktopctl guard                         # foreground hotkey + takeover guard (CLI-only)
 ```
 
 ## MCP tools (14)
@@ -89,59 +146,71 @@ as role `Scroll` with `v=NN%` / `h=NN%`.
 ## Human challenges (CAPTCHA relay)
 
 When `observe` on a browser window prints `!! challenge detected`, a
-"verify you are human"-style page is on screen. deskctl **never solves or
+"verify you are human"-style page is on screen. windesktopctl **never solves or
 guesses challenges** — no OCR-to-answer, no auto-clicking checkboxes, no
 evasion. It only relays:
 
 1. `challenge()` re-detects and returns a PNG of the challenge area with a
-   labeled grid overlay (rows A.., cols 1.., ~70px cells), saved to
-   `%LOCALAPPDATA%\deskctl\challenge_<id>.png`.
+   labeled grid overlay, saved to
+   `%LOCALAPPDATA%\windesktopctl\challenge_<id>.png`. Tile grids with a
+   regular lattice auto-switch to **numbered** cells (1..N — the user just
+   says "3 8 14"); other challenges get lettered cells (rows A.., cols 1..,
+   ~70px cells).
 2. Show that image to the user, wait for their reply, and pass it **verbatim**
-   to `challenge_answer(id, cells=..., text=...)` — e.g. cells `"B3 C4"` for
-   image grids, `text` for character challenges (with `enter=True` to press
-   Enter). It clicks/types exactly what you give it, then a verify/submit
-   button when present, and reports whether the challenge cleared.
-3. While a challenge is active (<10 min), `act`, `window`, and
+   to `challenge_answer(id, cells=..., text=...)` — numbers on numbered
+   grids, lettered cells like `"B3 C4"` otherwise, `text` for character
+   challenges (with `enter=True` to press Enter). It clicks/types exactly
+   what you give it, then a verify/submit button when present, and reports
+   whether the challenge cleared.
+3. To zoom into tiles: `challenge(region="C4:I10", grid="4x4")` re-captures
+   a sub-area of the previous capture with an exact numbered grid — choosing
+   the region/grid size is layout work and is allowed; answering is still
+   only the user's.
+4. While a challenge is active (<10 min), `act`, `window`, and
    `browser tab|navigate` **refuse** on that window — `challenge_answer` is
    the only input path.
 
-Honesty note: deskctl cannot verify that an answer really came from the
+Honesty note: windesktopctl cannot verify that an answer really came from the
 user — this is an agent-instruction contract enforced by the gating above.
 If you want per-answer human approval, set a Devin permission "ask" rule on
-the `challenge_answer` tool. `DESKCTL_NOTIFY_WEBHOOK` (a Discord webhook
+the `challenge_answer` tool. `WINDESKTOPCTL_NOTIFY_WEBHOOK` (a Discord webhook
 URL) optionally POSTs the challenge PNG so a human gets pinged; the URL is
 never logged.
 
-## HTTP mode + token
+## HTTP mode (manual)
+
+`windesktopctl serve` (above) is the easy path. The underlying server is also
+available directly:
 
 ```powershell
-$env:DESKCTL_TOKEN = "some-long-random-token"
-.\.venv\Scripts\deskctl-mcp.exe --http --host 127.0.0.1 --port 8765
+.\.venv\Scripts\windesktopctl-mcp.exe --http --host 127.0.0.1 --port 8765
 # tunnel/custom hostname? add: --allowed-host myhost.example.com:*
 ```
 
-`DESKCTL_TOKEN` is **required** (the server refuses to start without it) and
-every request must send `Authorization: Bearer <token>`; everything else gets
-`401`. Host headers are validated against DNS-rebinding rules: `127.0.0.1`,
+The token comes from `WINDESKTOPCTL_TOKEN` env or
+`%LOCALAPPDATA%\windesktopctl\token` (auto-created, user-only ACL); see
+**Token management**. Every request must send `Authorization: Bearer
+<token>`; everything else gets `401`, and >10 failures in 60s gets `429`.
+Host headers are validated against DNS-rebinding rules: `127.0.0.1`,
 `localhost`, and the bind host are allowed with or without port; repeat
 `--allowed-host` for tunnel hostnames. The MCP endpoint is
-`http://127.0.0.1:8765/mcp`. Default bind is loopback only — do not expose it.
+`http://127.0.0.1:8765/mcp`. Default bind is loopback only.
 
 ## Safety / kill switch
 
-- `deskctl pause` / `deskctl resume` (or MCP `pause`/`resume`), or the global
-  hotkey **Ctrl+Alt+Shift+K** (auto-started by `deskctl-mcp` and
-  `deskctl guard`).
+- `windesktopctl pause` / `windesktopctl resume` (or MCP `pause`/`resume`), or the global
+  hotkey **Ctrl+Alt+Shift+K** (auto-started by `windesktopctl-mcp` and
+  `windesktopctl guard`).
 - **Failsafe:** moving the cursor into the top-left 2px corner of the virtual
   screen refuses the next action and pauses automation.
 - **User takeover:** physical keyboard/mouse input (detected via
   WH_MOUSE_LL/WH_KEYBOARD_LL, injected events ignored) makes actions refuse
   with "user is using the PC ...; retry when idle" for
-  `DESKCTL_IDLE_SECONDS` (default 3). `type` also aborts mid-string.
+  `WINDESKTOPCTL_IDLE_SECONDS` (default 3). `type` also aborts mid-string.
   Note: input injected by remote tools (e.g. Sunshine) does **not** count as
-  the user. The MCP server or `deskctl guard` must be running for detection;
-  `deskctl status` shows `takeover=live` vs `off`.
-- Every action is appended as JSONL to `%LOCALAPPDATA%\deskctl\actions.log`
+  the user. The MCP server or `windesktopctl guard` must be running for detection;
+  `windesktopctl status` shows `takeover=live` vs `off`.
+- Every action is appended as JSONL to `%LOCALAPPDATA%\windesktopctl\actions.log`
   (timestamps, action, resolved coords; typed text is logged as a length only).
 
 ## Privacy exclusions
@@ -149,19 +218,19 @@ every request must send `Authorization: Bearer <token>`; everything else gets
 Password-manager processes are never observed and are blacked out of
 screen/region captures before OCR/encoding. Built-in list: `1password.exe`,
 `keepass.exe`, `keepassxc.exe`, `bitwarden.exe`, `enpass.exe`.
-`DESKCTL_EXCLUDE` (comma-separated process names) **adds** to that list.
+`WINDESKTOPCTL_EXCLUDE` (comma-separated process names) **adds** to that list.
 
 ## Environment variables
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DESKCTL_TOKEN` | — | required for `--http` Bearer auth |
-| `DESKCTL_UIA` | `cached` | `cached` (FindAllBuildCache) or `walk` (BFS fallback) |
-| `DESKCTL_IDLE_SECONDS` | `3` | takeover idle window |
-| `DESKCTL_EXCLUDE` | built-ins | extra excluded process names (comma-sep) |
-| `DESKCTL_TOOLS` | all | comma-separated MCP tool allowlist |
-| `DESKCTL_NOTIFY_WEBHOOK` | — | optional Discord webhook for challenge PNGs |
-| `DESKCTL_HOME` | `%LOCALAPPDATA%\deskctl` | state dir override |
+| `WINDESKTOPCTL_TOKEN` | token file | env override for HTTP Bearer auth |
+| `WINDESKTOPCTL_UIA` | `cached` | `cached` (FindAllBuildCache) or `walk` (BFS fallback) |
+| `WINDESKTOPCTL_IDLE_SECONDS` | `3` | takeover idle window |
+| `WINDESKTOPCTL_EXCLUDE` | built-ins | extra excluded process names (comma-sep) |
+| `WINDESKTOPCTL_TOOLS` | all | comma-separated MCP tool allowlist |
+| `WINDESKTOPCTL_NOTIFY_WEBHOOK` | — | optional Discord webhook for challenge PNGs |
+| `WINDESKTOPCTL_HOME` | `%LOCALAPPDATA%\windesktopctl` | state dir override |
 
 ## Tests
 

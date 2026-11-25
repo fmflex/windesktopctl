@@ -1,4 +1,4 @@
-"""deskctl CLI - same operations as the MCP server, for shell-driven agents.
+"""windesktopctl CLI - same operations as the MCP server, for shell-driven agents.
 
 Exit code 0 on success, 1 on error. Plain text output on stdout; --json
 switches to structured JSON ({"ok":true,"result":...} or observe's full
@@ -9,15 +9,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
-from deskctl.core import DeskctlError
-from deskctl.core import api
-from deskctl.core import safety
-from deskctl.core import state as st
-from deskctl.core import worker
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import api
+from windesktopctl.core import safety
+from windesktopctl.core import state as st
+from windesktopctl.core import worker
 
 
 def _run(fn, *args, **kwargs):
@@ -30,7 +31,7 @@ def _emit_json(obj) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="deskctl",
+        prog="windesktopctl",
         description="Observe and control the Windows desktop (UIA text first, OCR fallback, screenshots on demand).",
     )
     p.add_argument("--json", action="store_true", help="JSON output")
@@ -47,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-width", type=int, default=1280)
     s.add_argument("--no-marks", action="store_true", help="skip set-of-marks element boxes")
     s.add_argument("--jpeg", action="store_true", help="save as JPEG instead of PNG")
-    s.add_argument("--out", default=None, help="output path (default %%LOCALAPPDATA%%\\deskctl\\last.png|jpg)")
+    s.add_argument("--out", default=None, help="output path (default %%LOCALAPPDATA%%\\windesktopctl\\last.png|jpg)")
 
     for name in ("click", "double-click", "right-click", "move"):
         s = sub.add_parser(name, help=f"{name.replace('-', ' ')} at TARGET")
@@ -95,11 +96,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser(
         "challenge",
-        help="capture a human-verify challenge with a labeled grid (never solved by deskctl)",
+        help="capture a human-verify challenge with a labeled grid (never solved by windesktopctl)",
     )
     s.add_argument("--window", default="focused")
     s.add_argument("--rows", type=int, default=None)
     s.add_argument("--cols", type=int, default=None)
+    s.add_argument("--region", default=None,
+                   help='cell range of the previous capture, e.g. "C4:I10"')
+    s.add_argument("--grid", default=None,
+                   help='exact numbered grid, e.g. "4x4"')
 
     s = sub.add_parser(
         "challenge-answer",
@@ -122,6 +127,30 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("resume", help="resume actions")
     sub.add_parser("status", help="show pause/state status")
     sub.add_parser("guard", help="run the hotkey + input-takeover guard in the foreground")
+
+    s = sub.add_parser(
+        "token",
+        help="show/rotate the HTTP bearer token (WINDESKTOPCTL_TOKEN env wins)",
+    )
+    s.add_argument("--show", action="store_true", help="print the full token")
+    s.add_argument("--rotate", action="store_true", help="generate a new token")
+
+    s = sub.add_parser(
+        "serve",
+        help="run the MCP server over HTTP (127.0.0.1; optional tailscale expose)",
+    )
+    s.add_argument(
+        "--expose",
+        choices=["local", "tailnet", "funnel"],
+        default="local",
+        help="local = localhost only; tailnet = your tailnet via `tailscale serve`; "
+        "funnel = PUBLIC internet via `tailscale funnel`",
+    )
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--show-token", action="store_true",
+                   help="print the real token in the banner/config JSON")
+    s.add_argument("--copy", action="store_true",
+                   help="copy the full MCP config JSON (real token) to clipboard")
 
     return p
 
@@ -166,7 +195,10 @@ def _dispatch(args) -> str:
         val = args.value if args.action in ("tab", "navigate") else None
         return _run(api.browser, args.action, val, args.window, args.max_chars)
     if cmd == "challenge":
-        _data, info = _run(api.challenge, args.window, args.rows, args.cols)
+        _data, info = _run(
+            api.challenge, args.window, args.rows, args.cols,
+            args.region, args.grid,
+        )
         return info
     if cmd == "challenge-answer":
         return _run(
@@ -187,14 +219,26 @@ def _dispatch(args) -> str:
         return _run(api.status)
     if cmd == "guard":
         safety.start_hotkey_guard()
-        print("deskctl guard active: Ctrl+Alt+Shift+K toggles pause; Ctrl+C to exit", flush=True)
+        print("windesktopctl guard active: Ctrl+Alt+Shift+K toggles pause; Ctrl+C to exit", flush=True)
         try:
             while True:
                 time.sleep(3600)
         except KeyboardInterrupt:
             pass
         return ""
-    raise DeskctlError(f"unknown command {cmd}")
+    if cmd == "token":
+        from windesktopctl.core import token as tok
+
+        if args.rotate:
+            t, path = tok.rotate_token()
+        else:
+            t, path, _created = tok.ensure_token()
+        env_note = ""
+        if os.environ.get(tok.ENV_VAR, "").strip():
+            env_note = f"  (WINDESKTOPCTL_TOKEN env var is set and overrides the file)"
+        shown = t if args.show else tok.masked(t)
+        return f"token: {shown}\nfile: {path}{env_note}"
+    raise WindesktopctlError(f"unknown command {cmd}")
 
 
 def main(argv=None) -> int:
@@ -209,6 +253,15 @@ def main(argv=None) -> int:
         if args.cmd == "guard":
             _dispatch(args)
             return 0
+        if args.cmd == "serve":
+            from windesktopctl import serve as _serve
+
+            return _serve.run(
+                expose=args.expose,
+                port=args.port,
+                show_token=args.show_token,
+                copy=args.copy,
+            )
         result = _dispatch(args)
         if args.json:
             if args.cmd == "observe":
@@ -219,7 +272,7 @@ def main(argv=None) -> int:
         else:
             print(result)
         return 0
-    except DeskctlError as e:
+    except WindesktopctlError as e:
         if args.json:
             _emit_json({"ok": False, "error": str(e)})
         else:

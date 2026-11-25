@@ -2,8 +2,8 @@
 
 import pytest
 
-from deskctl.core import DeskctlError
-from deskctl.core import input as _in
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import input as _in
 
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
@@ -59,15 +59,15 @@ def test_parse_shifted_punctuation_adds_shift():
 
 
 def test_parse_errors():
-    with pytest.raises(DeskctlError):
+    with pytest.raises(WindesktopctlError):
         _in.parse_combo("")
-    with pytest.raises(DeskctlError):  # modifiers only, no key
+    with pytest.raises(WindesktopctlError):  # modifiers only, no key
         _in.parse_combo("ctrl+shift")
-    with pytest.raises(DeskctlError):  # two non-modifier keys
+    with pytest.raises(WindesktopctlError):  # two non-modifier keys
         _in.parse_combo("a+b")
-    with pytest.raises(DeskctlError):  # unknown named key
+    with pytest.raises(WindesktopctlError):  # unknown named key
         _in.parse_combo("notakey")
-    with pytest.raises(DeskctlError):  # f-key out of range
+    with pytest.raises(WindesktopctlError):  # f-key out of range
         _in.parse_combo("f25")
 
 
@@ -91,7 +91,7 @@ def test_type_text_chunk_abort(monkeypatch):
         calls["n"] += 1
         return calls["n"] >= 1  # active right after first chunk
 
-    with pytest.raises(DeskctlError, match="stopped after 20/45 chars"):
+    with pytest.raises(WindesktopctlError, match="stopped after 20/45 chars"):
         _in.type_text(text, user_active=user_active)
     assert len(sent) == 1  # only the first chunk went out
 

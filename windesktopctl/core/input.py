@@ -12,8 +12,8 @@ import struct
 import time
 from ctypes import wintypes as wt
 
-from deskctl.core import dpi
-from deskctl.core import DeskctlError
+from windesktopctl.core import dpi
+from windesktopctl.core import WindesktopctlError
 
 user32 = ctypes.windll.user32
 
@@ -97,7 +97,7 @@ def _send(inputs: list[INPUT]) -> None:
     arr = (INPUT * len(inputs))(*inputs)
     sent = user32.SendInput(len(inputs), arr, _INPUT_SIZE)
     if sent != len(inputs):
-        raise DeskctlError(f"SendInput delivered {sent}/{len(inputs)} events")
+        raise WindesktopctlError(f"SendInput delivered {sent}/{len(inputs)} events")
 
 
 def _mi(dx=0, dy=0, data=0, flags=0) -> INPUT:
@@ -163,7 +163,7 @@ _BUTTONS = {
 
 def click(x: int, y: int, button: str = "left", double: bool = False) -> None:
     if button not in _BUTTONS:
-        raise DeskctlError(f"unknown mouse button {button!r}")
+        raise WindesktopctlError(f"unknown mouse button {button!r}")
     down, up = _BUTTONS[button]
     move_to(x, y)
     time.sleep(0.02)
@@ -203,7 +203,7 @@ def scroll(
     flag = MOUSEEVENTF_HWHEEL if horizontal else MOUSEEVENTF_WHEEL
     remaining = int(round(float(amount) * WHEEL_DELTA))
     if remaining == 0:
-        raise DeskctlError("scroll amount too small")
+        raise WindesktopctlError("scroll amount too small")
     sign = 1 if remaining > 0 else -1
     while remaining:
         d = sign * min(120, abs(remaining))
@@ -337,7 +337,7 @@ def _key_vk(token: str) -> tuple[int, bool]:
         n = int(m.group(1))
         if 1 <= n <= 24:
             return 0x6F + n, False
-        raise DeskctlError(f'unknown key "{token}"')
+        raise WindesktopctlError(f'unknown key "{token}"')
     if len(token) == 1:
         c = token
         if c in _US_SHIFTED:
@@ -357,15 +357,15 @@ def _key_vk(token: str) -> tuple[int, bool]:
                     return vk2, bool((ret >> 8) & 1)
         except Exception:
             pass
-        raise DeskctlError(f'unknown key "{token}" (US keyboard layout assumed)')
-    raise DeskctlError(f'unknown key "{token}"')
+        raise WindesktopctlError(f'unknown key "{token}" (US keyboard layout assumed)')
+    raise WindesktopctlError(f'unknown key "{token}"')
 
 
 def parse_combo(combo: str) -> tuple[list[int], int, bool]:
     """Parse "ctrl+shift+s" -> (modifier_vks, key_vk, extra_shift_needed)."""
     parts = [p for p in str(combo).replace(" ", "").split("+") if p != ""]
     if not parts:
-        raise DeskctlError("empty key combo")
+        raise WindesktopctlError("empty key combo")
     mods: list[int] = []
     key_vk = 0
     extra_shift = False
@@ -377,10 +377,10 @@ def parse_combo(combo: str) -> tuple[list[int], int, bool]:
                 mods.append(vk)
             continue
         if key_vk:
-            raise DeskctlError(f'ambiguous combo "{combo}": more than one non-modifier key')
+            raise WindesktopctlError(f'ambiguous combo "{combo}": more than one non-modifier key')
         key_vk, extra_shift = _key_vk(tok)
     if not key_vk:
-        raise DeskctlError(f'combo "{combo}" has no non-modifier key')
+        raise WindesktopctlError(f'combo "{combo}" has no non-modifier key')
     if extra_shift and 0x10 not in mods:
         mods.append(0x10)
     return mods, key_vk, extra_shift
@@ -427,4 +427,4 @@ def type_text(text: str, user_active=None) -> None:
         _send(seq)
         sent = min(total, i + chunk)
         if user_active is not None and sent < total and user_active():
-            raise DeskctlError(f"stopped after {sent}/{total} chars: user took over")
+            raise WindesktopctlError(f"stopped after {sent}/{total} chars: user took over")

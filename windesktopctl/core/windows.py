@@ -7,7 +7,7 @@ import os
 import time
 from ctypes import wintypes as wt
 
-from deskctl.core import DeskctlError
+from windesktopctl.core import WindesktopctlError
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -192,7 +192,7 @@ def set_foreground(hwnd: int) -> bool:
     try:
         # ALT tap satisfies the foreground-lock heuristic on modern Windows.
         try:
-            from deskctl.core import input as _input
+            from windesktopctl.core import input as _input
 
             _input.press_combo("alt")
         except Exception:

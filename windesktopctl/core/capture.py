@@ -3,8 +3,8 @@
 import mss
 from PIL import Image
 
-from deskctl.core import dpi
-from deskctl.core import DeskctlError
+from windesktopctl.core import dpi
+from windesktopctl.core import WindesktopctlError
 
 _sct: mss.MSS | None = None
 
@@ -24,11 +24,11 @@ def grab_rect(x: int, y: int, w: int, h: int) -> tuple[Image.Image, tuple[int, i
     """Grab a screen rectangle (absolute virtual-screen px, may be negative).
 
     Returns (PIL RGB image, (origin_x, origin_y)). The rect is clamped to the
-    virtual screen; raises DeskctlError if it does not intersect it at all.
+    virtual screen; raises WindesktopctlError if it does not intersect it at all.
     """
     x, y, w, h = int(x), int(y), int(w), int(h)
     if w <= 0 or h <= 0:
-        raise DeskctlError(f"invalid capture rect {x},{y},{w},{h}")
+        raise WindesktopctlError(f"invalid capture rect {x},{y},{w},{h}")
 
     vx, vy, vw, vh = dpi.virtual_screen()
     x1 = max(x, vx)
@@ -36,7 +36,7 @@ def grab_rect(x: int, y: int, w: int, h: int) -> tuple[Image.Image, tuple[int, i
     x2 = min(x + w, vx + vw)
     y2 = min(y + h, vy + vh)
     if x2 <= x1 or y2 <= y1:
-        raise DeskctlError(f"capture rect {x},{y},{w},{h} is outside the screen")
+        raise WindesktopctlError(f"capture rect {x},{y},{w},{h} is outside the screen")
 
     shot = _mss().grab({"left": x1, "top": y1, "width": x2 - x1, "height": y2 - y1})
     img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")

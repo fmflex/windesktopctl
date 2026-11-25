@@ -1,7 +1,7 @@
 """Privacy exclusions: never observe/screenshot password-manager windows,
 and blackout their rects in screen/region captures before OCR/encoding.
 
-DESKCTL_EXCLUDE (comma-separated process names) ADDS to the built-in
+WINDESKTOPCTL_EXCLUDE (comma-separated process names) ADDS to the built-in
 password-manager list - exclusions only ever grow, never shrink.
 """
 
@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import os
 
-from deskctl.core import DeskctlError
-from deskctl.core import windows as win
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import windows as win
 
 DEFAULT_EXCLUDE = (
     "1password.exe",
@@ -31,7 +31,7 @@ def _norm(name: str) -> str:
 def excluded_procs() -> set[str]:
     """Normalized process basenames that must never be observed."""
     out = {_norm(p) for p in DEFAULT_EXCLUDE}
-    env = os.environ.get("DESKCTL_EXCLUDE", "")
+    env = os.environ.get("WINDESKTOPCTL_EXCLUDE", "")
     for p in env.split(","):
         n = _norm(p)
         if n:
@@ -49,14 +49,14 @@ def is_excluded_hwnd(hwnd: int) -> bool:
 
 
 def check_window_allowed(hwnd: int, title: str = "", proc: str | None = None) -> None:
-    """Raise DeskctlError if hwnd belongs to an excluded process."""
+    """Raise WindesktopctlError if hwnd belongs to an excluded process."""
     if proc is None:
         info = win.window_info(int(hwnd))
         proc = info.process if info else ""
     if is_excluded_proc(proc):
-        raise DeskctlError(
+        raise WindesktopctlError(
             f'privacy: window "{title}" ({proc}) is excluded; '
-            "set DESKCTL_EXCLUDE to change the list"
+            "set WINDESKTOPCTL_EXCLUDE to change the list"
         )
 
 

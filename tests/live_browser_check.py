@@ -43,7 +43,7 @@ from _live_browser import (  # noqa: E402
     page_url,
 )
 from _live_notepad import assert_safe_target, run  # noqa: E402
-from deskctl.core import DeskctlError, api, windows as win  # noqa: E402
+from windesktopctl.core import WindesktopctlError, api, windows as win  # noqa: E402
 
 
 def tok() -> str:
@@ -61,7 +61,7 @@ def check(name: str, cond: bool, extra: str = "") -> None:
 def expect_error(fn, needle: str) -> str:
     try:
         out = fn()
-    except DeskctlError as ex:
+    except WindesktopctlError as ex:
         return str(ex)
     except Exception as ex:
         return f"{type(ex).__name__}: {ex}"
@@ -108,7 +108,7 @@ def article_checks() -> None:
 
         text = run(api.browser, "text", None, hwnd, 4000)
         print("--- browser text (head) ---\n" + "\n".join(text.splitlines()[:12]))
-        check("text: heading '# '", "# Deskctl Test Article" in text)
+        check("text: heading '# '", "# Windesktopctl Test Article" in text)
         check("text: link '[...]'", "[example domain]" in text)
         check("text: offscreen content", "Below the Fold" in text)
         check("text: ~tokens reported", "~tokens=" in text)
@@ -121,7 +121,7 @@ def article_checks() -> None:
               out.splitlines()[0] if out else "")
         time.sleep(0.5)
         info = run(api.browser, "info", None, hwnd)
-        check("navigate new title", f"deskctl-test-notes-{t3}" in info, info.splitlines()[0])
+        check("navigate new title", f"windesktopctl-test-notes-{t3}" in info, info.splitlines()[0])
     finally:
         ok = s.close()
         check("article chrome closed+cleaned", ok)
@@ -130,7 +130,8 @@ def article_checks() -> None:
 # --------------------------------------------------------------- challenges --
 
 CHALLENGES = [
-    ("grid", "fake_challenge_grid.html", "grid", {"rows": 16, "cols": 16}),
+    # grid uses auto mode: tighter detect rect + lattice -> numbered cells
+    ("grid", "fake_challenge_grid.html", "grid", {}),
     ("text", "fake_challenge_text.html", "text", {}),
     ("checkbox", "fake_challenge_checkbox.html", "checkbox", {}),
 ]
@@ -172,6 +173,8 @@ def challenge_capture() -> None:
             path = Path(info.split("saved=")[1].split()[0])
             check(f"{key}: challenge id+png", path.exists() and path.stat().st_size > 1000,
                   str(path))
+            if key == "grid":
+                check("grid: numbered mode", "numbered grid" in info, info[:120])
             manifest["sessions"][key] = {
                 "hwnd": int(hwnd),
                 "token": token,

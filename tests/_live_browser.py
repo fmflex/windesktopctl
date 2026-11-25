@@ -29,14 +29,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from deskctl.core import api  # noqa: E402
-from deskctl.core import windows as win  # noqa: E402
+from windesktopctl.core import api  # noqa: E402
+from windesktopctl.core import windows as win  # noqa: E402
 
 from _live_notepad import assert_safe_target, run  # noqa: E402
 
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 PAGES = Path(__file__).resolve().parent / "pages"
-MANIFEST = Path(tempfile.gettempdir()) / "deskctl_live_browser" / "manifest.json"
+MANIFEST = Path(tempfile.gettempdir()) / "windesktopctl_live_browser" / "manifest.json"
 
 
 def page_url(name: str, token: str) -> str:
@@ -64,7 +64,7 @@ class ChromeSession:
         self.token = token  # unique substring expected in the window title
         self.page = page
         self.urls = urls or [page_url(page, token)]
-        self.profile = Path(tempfile.mkdtemp(prefix="deskctl_chrome_"))
+        self.profile = Path(tempfile.mkdtemp(prefix="windesktopctl_chrome_"))
         self.hwnd = 0
         self.proc: subprocess.Popen | None = None
         self.preexisting = False

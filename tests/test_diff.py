@@ -2,8 +2,8 @@
 
 from PIL import Image, ImageDraw, ImageFont
 
-from deskctl.core import diff
-from deskctl.core import state as st
+from windesktopctl.core import diff
+from windesktopctl.core import state as st
 
 SCREEN = (2880, 1758)  # this machine's virtual screen size
 
@@ -81,7 +81,7 @@ def test_mean_abs_diff_range():
 
 
 def test_baseline_bytes_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setenv("DESKCTL_HOME", str(tmp_path / "d"))
+    monkeypatch.setenv("WINDESKTOPCTL_HOME", str(tmp_path / "d"))
     t = diff.thumb(Image.new("RGB", (50, 50), "red"))
     data = diff.to_bytes(t)
     st.set_baseline(data)

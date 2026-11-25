@@ -4,16 +4,16 @@ import time
 
 import pytest
 
-from deskctl.core import DeskctlError
-from deskctl.core import elements as el
-from deskctl.core import state as st
-from deskctl.core import windows as win
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import elements as el
+from windesktopctl.core import state as st
+from windesktopctl.core import windows as win
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    d = tmp_path / "deskctl"
-    monkeypatch.setenv("DESKCTL_HOME", str(d))
+    d = tmp_path / "windesktopctl"
+    monkeypatch.setenv("WINDESKTOPCTL_HOME", str(d))
     return d
 
 
@@ -66,14 +66,14 @@ def test_resolve_element_id(home, live_window):
 
 def test_resolve_element_stale(home):
     _record(ts=time.time() - 700)
-    with pytest.raises(DeskctlError, match="stale"):
+    with pytest.raises(WindesktopctlError, match="stale"):
         st.resolve_target("1")
 
 
 def test_stale_id_window_gone(home, monkeypatch):
     _record()
     monkeypatch.setattr(win, "window_info", lambda h: None)
-    with pytest.raises(DeskctlError, match="window closed"):
+    with pytest.raises(WindesktopctlError, match="window closed"):
         st.resolve_target("1")
 
 
@@ -81,7 +81,7 @@ def test_stale_id_window_moved(home, monkeypatch):
     _record()
     monkeypatch.setattr(win, "window_info", lambda h: _wininfo(rect=(0, 0, 200, 200)))
     monkeypatch.setattr(win, "focused_hwnd", lambda: 42)
-    with pytest.raises(DeskctlError, match="moved/resized"):
+    with pytest.raises(WindesktopctlError, match="moved/resized"):
         st.resolve_target("1")
 
 
@@ -107,7 +107,7 @@ def test_stale_id_screen_observe_skips_checks(home, monkeypatch):
 
 def test_resolve_unknown_id(home):
     _record()
-    with pytest.raises(DeskctlError, match="unknown element id"):
+    with pytest.raises(WindesktopctlError, match="unknown element id"):
         st.resolve_target("77")
 
 
@@ -134,14 +134,14 @@ def test_resolve_image_stale(home):
     s = st.load()
     s["screenshot"]["ts"] = time.time() - 700
     st.save(s)
-    with pytest.raises(DeskctlError, match="stale"):
+    with pytest.raises(WindesktopctlError, match="stale"):
         st.resolve_target("i:1,1")
 
 
 def test_resolve_bad_target(home):
-    with pytest.raises(DeskctlError, match="unrecognized target"):
+    with pytest.raises(WindesktopctlError, match="unrecognized target"):
         st.resolve_target("click here")
-    with pytest.raises(DeskctlError, match="unrecognized target"):
+    with pytest.raises(WindesktopctlError, match="unrecognized target"):
         st.resolve_target("1,2,3")
 
 

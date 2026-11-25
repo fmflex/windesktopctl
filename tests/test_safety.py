@@ -2,17 +2,17 @@
 
 import pytest
 
-from deskctl.core import DeskctlError
-from deskctl.core import dpi
-from deskctl.core import input as _in
-from deskctl.core import safety
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import dpi
+from windesktopctl.core import input as _in
+from windesktopctl.core import safety
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    d = tmp_path / "deskctl"
+    d = tmp_path / "windesktopctl"
     d.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("DESKCTL_HOME", str(d))
+    monkeypatch.setenv("WINDESKTOPCTL_HOME", str(d))
     return d
 
 
@@ -49,7 +49,7 @@ def test_pause_resume_toggle(home):
 
 def test_check_before_action_refuses_when_paused(home):
     safety.pause()
-    with pytest.raises(DeskctlError, match="paused"):
+    with pytest.raises(WindesktopctlError, match="paused"):
         safety.check_before_action()
     safety.resume()
 
@@ -57,7 +57,7 @@ def test_check_before_action_refuses_when_paused(home):
 def test_check_before_action_failsafe_pauses(home, monkeypatch):
     monkeypatch.setattr(dpi, "virtual_screen", lambda: (0, 0, 100, 100))
     monkeypatch.setattr(_in, "cursor_pos", lambda: (0, 0))
-    with pytest.raises(DeskctlError, match="failsafe"):
+    with pytest.raises(WindesktopctlError, match="failsafe"):
         safety.check_before_action()
     assert safety.is_paused()  # failsafe auto-pauses
     safety.resume()
@@ -83,7 +83,7 @@ def test_takeover_file_marks_active(home, monkeypatch):
     (home / "user_active").write_text(repr(_t.time() + 60))
     assert safety.is_user_active()
     monkeypatch.setattr(_in, "cursor_pos", lambda: (50, 50))
-    with pytest.raises(DeskctlError, match="user is using the PC"):
+    with pytest.raises(WindesktopctlError, match="user is using the PC"):
         safety.check_before_action()
 
 
@@ -101,7 +101,7 @@ def test_takeover_inprocess_mark(home, monkeypatch):
     safety._mark_user_active()
     assert safety.is_user_active()
     monkeypatch.setattr(_in, "cursor_pos", lambda: (50, 50))
-    with pytest.raises(DeskctlError, match="user is using"):
+    with pytest.raises(WindesktopctlError, match="user is using"):
         safety.check_user_takeover()
 
 
@@ -118,7 +118,7 @@ def test_takeover_heartbeat_live(home, monkeypatch):
 
 
 def test_takeover_idle_seconds_env(home, monkeypatch):
-    monkeypatch.setenv("DESKCTL_IDLE_SECONDS", "7")
+    monkeypatch.setenv("WINDESKTOPCTL_IDLE_SECONDS", "7")
     assert safety.idle_seconds() == 7.0
-    monkeypatch.setenv("DESKCTL_IDLE_SECONDS", "bogus")
+    monkeypatch.setenv("WINDESKTOPCTL_IDLE_SECONDS", "bogus")
     assert safety.idle_seconds() == 3.0

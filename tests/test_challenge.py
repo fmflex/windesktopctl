@@ -7,20 +7,20 @@ from __future__ import annotations
 
 import pytest
 
-from deskctl.core import DeskctlError
-from deskctl.core import api
-from deskctl.core import challenge as ch
-from deskctl.core import elements as el
-from deskctl.core import state as st
-from deskctl.core import windows as win
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import api
+from windesktopctl.core import challenge as ch
+from windesktopctl.core import elements as el
+from windesktopctl.core import state as st
+from windesktopctl.core import windows as win
 
 WIN = (0, 0, 1200, 800)
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    d = tmp_path / "deskctl"
-    monkeypatch.setenv("DESKCTL_HOME", str(d))
+    d = tmp_path / "windesktopctl"
+    monkeypatch.setenv("WINDESKTOPCTL_HOME", str(d))
     return d
 
 
@@ -30,7 +30,7 @@ def _el(role, name, rect=(0, 0, 50, 20), value=""):
 
 # ------------------------------------------------------- detect_challenge --
 
-def test_detect_grid_kind_and_fallback_rect():
+def test_detect_grid_kind_and_scoped_rect():
     elems = [
         _el("Text", "Verify you are human"),
         _el("Text", "Select all squares with traffic lights", (0, 30, 400, 20)),
@@ -38,9 +38,23 @@ def test_detect_grid_kind_and_fallback_rect():
     ]
     d = ch.detect_challenge("Some Page - Google Chrome", elems, WIN)
     assert d is not None and d["kind"] == "grid"
-    # union of the two text rects +40 pad is < MIN_RECT_H -> content fallback
-    assert d["rect"] == WIN and d["fallback"] is True
+    # grid kind scopes tighter: matched texts + nearby tile, +40 pad,
+    # clamped to the window - NOT the whole-window fallback anymore
+    assert d["rect"] == (0, 0, 480, 280) and d["fallback"] is False
     assert len(d["matched"]) == 2
+
+
+def test_detect_grid_scope_ignores_far_buttons():
+    elems = [
+        _el("Text", "Select all squares with traffic lights", (100, 100, 400, 20)),
+        _el("Button", "tile 1", (100, 140, 100, 100)),
+        _el("Button", "unrelated page button", (900, 600, 120, 40)),
+    ]
+    d = ch.detect_challenge("x", elems, WIN)
+    assert d is not None and d["kind"] == "grid"
+    # far button must not be absorbed into the challenge rect
+    assert d["rect"][0] + d["rect"][2] < 900
+    assert d["rect"][1] + d["rect"][3] < 600
 
 
 def test_detect_grid_keeps_large_union():
@@ -210,7 +224,7 @@ def test_notify_webhook_posts_multipart(home, monkeypatch):
         captured["body"] = req.data
         return FakeResp()
 
-    monkeypatch.setenv("DESKCTL_NOTIFY_WEBHOOK", "https://discord.example/hook")
+    monkeypatch.setenv("WINDESKTOPCTL_NOTIFY_WEBHOOK", "https://discord.example/hook")
     monkeypatch.setattr(api.urllib.request, "urlopen", fake_urlopen)
     warn = api._notify_webhook({"id": 3, "kind": "grid", "title": "T"}, b"PNGBYTES")
     assert warn is None
@@ -220,9 +234,9 @@ def test_notify_webhook_posts_multipart(home, monkeypatch):
 
 
 def test_notify_webhook_unset_and_failure(home, monkeypatch):
-    monkeypatch.delenv("DESKCTL_NOTIFY_WEBHOOK", raising=False)
+    monkeypatch.delenv("WINDESKTOPCTL_NOTIFY_WEBHOOK", raising=False)
     assert api._notify_webhook({"id": 1}, b"x") is None
-    monkeypatch.setenv("DESKCTL_NOTIFY_WEBHOOK", "https://x.example/")
+    monkeypatch.setenv("WINDESKTOPCTL_NOTIFY_WEBHOOK", "https://x.example/")
 
     def boom(req, timeout=0):
         raise OSError("no route")
@@ -268,9 +282,9 @@ def test_act_refused_when_challenge_foreground(home, monkeypatch):
     st.record_challenge(_challenge_rec(hwnd=42))
     monkeypatch.setattr(win, "focused_hwnd", lambda: 42)
     monkeypatch.setattr(api.safety, "check_before_action", lambda: None)
-    with pytest.raises(DeskctlError, match="challenge on screen"):
+    with pytest.raises(WindesktopctlError, match="challenge on screen"):
         api.act("click", "100,100")
-    with pytest.raises(DeskctlError, match="challenge on screen"):
+    with pytest.raises(WindesktopctlError, match="challenge on screen"):
         api.act("type", None, "hello")
 
 
@@ -278,7 +292,7 @@ def test_act_refused_target_inside_challenge_rect(home, monkeypatch):
     st.record_challenge(_challenge_rec(hwnd=42, rect=(100, 100, 200, 200)))
     monkeypatch.setattr(win, "focused_hwnd", lambda: 7)  # elsewhere focused
     monkeypatch.setattr(api.safety, "check_before_action", lambda: None)
-    with pytest.raises(DeskctlError, match="challenge on screen"):
+    with pytest.raises(WindesktopctlError, match="challenge on screen"):
         api.act("click", "150,150")
     # ...but a coord target outside the rect is allowed through the gate
     monkeypatch.setattr(api, "_do_act", lambda *a, **k: ("ok: mocked", None, {}))
@@ -293,7 +307,7 @@ def test_act_refused_element_id_of_challenge_window(home, monkeypatch):
     monkeypatch.setattr(win, "focused_hwnd", lambda: 7)
     monkeypatch.setattr(api.safety, "check_before_action", lambda: None)
     monkeypatch.setattr(st, "get_observe", lambda: {"hwnd": 42, "elements": {}})
-    with pytest.raises(DeskctlError, match="challenge on screen"):
+    with pytest.raises(WindesktopctlError, match="challenge on screen"):
         api.act("click", "3")
 
 
@@ -307,22 +321,22 @@ def test_window_and_browser_gated(home, monkeypatch):
     monkeypatch.setattr(
         api, "_resolve_window", lambda spec, allow_iconic=False: fake_w
     )
-    with pytest.raises(DeskctlError, match="challenge on screen"):
+    with pytest.raises(WindesktopctlError, match="challenge on screen"):
         api.window("minimize", "42")
-    with pytest.raises(DeskctlError, match="challenge on screen"):
+    with pytest.raises(WindesktopctlError, match="challenge on screen"):
         api._browser_navigate(fake_w, "https://example.com")
 
 
 def test_challenge_answer_stale_id(home):
     rec = st.record_challenge(_challenge_rec())
-    with pytest.raises(DeskctlError, match="stale challenge id"):
+    with pytest.raises(WindesktopctlError, match="stale challenge id"):
         api.challenge_answer(rec["id"] + 100)
 
 
 def test_challenge_answer_expired(home, monkeypatch):
     rec = st.record_challenge(_challenge_rec())
     monkeypatch.setattr(st, "CHALLENGE_MAX_AGE", 0)
-    with pytest.raises(DeskctlError, match="stale challenge id"):
+    with pytest.raises(WindesktopctlError, match="stale challenge id"):
         api.challenge_answer(rec["id"])
 
 
@@ -377,13 +391,13 @@ def test_resolve_tab_index_title_and_ambiguity():
     assert api._resolve_tab(tabs, "1")["name"] == "Alpha"
     assert api._resolve_tab(tabs, "alpha")["name"] == "Alpha"   # exact wins
     assert api._resolve_tab(tabs, "beta page")["name"] == "Beta page"
-    with pytest.raises(DeskctlError, match="ambiguous tab"):
+    with pytest.raises(WindesktopctlError, match="ambiguous tab"):
         api._resolve_tab(tabs, "beta")
-    with pytest.raises(DeskctlError, match="out of range"):
+    with pytest.raises(WindesktopctlError, match="out of range"):
         api._resolve_tab(tabs, "t9")
-    with pytest.raises(DeskctlError, match="no tab matching"):
+    with pytest.raises(WindesktopctlError, match="no tab matching"):
         api._resolve_tab(tabs, "zzz")
-    with pytest.raises(DeskctlError, match="requires a value"):
+    with pytest.raises(WindesktopctlError, match="requires a value"):
         api._resolve_tab(tabs, "")
 
 
@@ -480,3 +494,205 @@ def test_observe_no_detection_on_non_browser(home, monkeypatch):
     d = api.observe_data("42", "uia", 50)
     assert st.get_challenge() is None
     assert not any("challenge" in n for n in d["notes"])
+
+
+# ------------------------------------------- numbered grids / region / lattice --
+
+def test_parse_grid_spec():
+    assert ch.parse_grid_spec("4x4") == (4, 4)
+    assert ch.parse_grid_spec(" 3 X 3 ") == (3, 3)
+    with pytest.raises(ValueError):
+        ch.parse_grid_spec("four")
+    with pytest.raises(ValueError):
+        ch.parse_grid_spec("0x4")
+
+
+def test_cell_number_row_major():
+    # 4x4: numbers 1-16 row-major
+    assert ch.cell_number(0, 0, 4) == 1
+    assert ch.cell_number(0, 3, 4) == 4
+    assert ch.cell_number(3, 0, 4) == 13
+    assert ch.cell_number(3, 3, 4) == 16
+
+
+def test_parse_numbered_cells():
+    out = ch.parse_numbered_cells("1 4 13 16", 4, 4)
+    assert out == [(0, 0), (0, 3), (3, 0), (3, 3)]
+    out = ch.parse_numbered_cells("3,8,14", 4, 4)
+    assert out == [(0, 2), (1, 3), (3, 1)]
+
+
+def test_parse_numbered_cells_errors():
+    with pytest.raises(ValueError):
+        ch.parse_numbered_cells("17", 4, 4)  # out of range
+    with pytest.raises(ValueError):
+        ch.parse_numbered_cells("0", 4, 4)
+    with pytest.raises(ValueError):
+        ch.parse_numbered_cells("B3", 4, 4)  # lettered on numbered grid
+    with pytest.raises(ValueError):
+        ch.parse_numbered_cells("", 4, 4)
+
+
+def test_parse_cells_rejects_plain_numbers():
+    # lettered grid + "3 8 14" -> mode mismatch error
+    with pytest.raises(ValueError):
+        ch.parse_cells("3 8 14", 4, 4)
+
+
+def _grid(rect=(100, 100, 400, 400), rows=4, cols=4, mode="letters"):
+    return {"rect": list(rect), "rows": rows, "cols": cols, "mode": mode}
+
+
+def test_cells_rect_mapping():
+    g = _grid()
+    # cell (0,0)-(0,0) of a 4x4 over 400x400 -> 100x100 at 100,100
+    assert ch.cells_rect(g, 0, 0, 0, 0) == (100, 100, 100, 100)
+    # C4:I10 style range on an 8x8 grid over 800x800 -> cols 2..8 rows 3..9
+    g8 = _grid((0, 0, 800, 800), 8, 8)
+    x, y, w, h = ch.cells_rect(g8, 3, 2, 9, 8)
+    assert (x, y) == (200, 300)
+    assert (w, h) == (700, 700)
+
+
+def test_parse_region():
+    # 10x10 grid over 1000x1000: "C4:I10" -> rows C..I (2..8), cols 4..10 (3..9)
+    g = _grid((0, 0, 1000, 1000), 10, 10)
+    rect = ch.parse_region("C4:I10", g)
+    assert rect == ch.cells_rect(g, 2, 3, 8, 9)
+    x, y, w, h = rect
+    assert (x, y, w, h) == (300, 200, 700, 700)
+    # reversed order normalizes
+    assert ch.parse_region("I10:C4", g) == rect
+    with pytest.raises(ValueError):
+        ch.parse_region("bad", g)
+    with pytest.raises(ValueError):
+        ch.parse_region("C4:I10", {"rect": [0, 0, 1, 1]})  # no dims
+    with pytest.raises(ValueError):
+        ch.parse_region("Z9:Z9", g)  # out of range
+
+
+def _lattice_btn(x, y, s=100):
+    return _el("Button", f"tile {x},{y}", (x, y, s, s))
+
+
+def test_infer_lattice_4x4():
+    elems = [
+        _lattice_btn(100 + c * 110, 100 + r * 110) for r in range(4) for c in range(4)
+    ]
+    rect = (50, 50, 600, 600)
+    out = ch.infer_lattice(elems, rect)
+    assert out is not None
+    rows, cols, bbox = out
+    assert (rows, cols) == (4, 4)
+    # bbox = union of tile rects: x 100..530, y 100..530
+    assert bbox[0] == 100 and bbox[1] == 100
+    assert bbox[2] == 430 and bbox[3] == 430
+
+
+def test_infer_lattice_3x3():
+    elems = [
+        _lattice_btn(200 + c * 120, 200 + r * 120, s=100) for r in range(3) for c in range(3)
+    ]
+    out = ch.infer_lattice(elems, (0, 0, 1200, 800))
+    assert out is not None and out[0] == 3 and out[1] == 3
+
+
+def test_infer_lattice_rejects_irregular():
+    # 4x4 minus one tile -> 15 elements, not a full lattice
+    elems = [
+        _lattice_btn(100 + c * 110, 100 + r * 110)
+        for r in range(4) for c in range(4)
+        if not (r == 0 and c == 0)
+    ]
+    assert ch.infer_lattice(elems, (0, 0, 1200, 800)) is None
+    # different sizes -> not similar -> filtered out
+    elems = [_lattice_btn(100 + c * 110, 100 + r * 110, s=100 if c % 2 else 40)
+             for r in range(4) for c in range(4)]
+    assert ch.infer_lattice(elems, (0, 0, 1200, 800)) is None
+    # 5x5 -> not a supported dim
+    elems = [
+        _lattice_btn(50 + c * 100, 50 + r * 100) for r in range(5) for c in range(5)
+    ]
+    assert ch.infer_lattice(elems, (0, 0, 1200, 800)) is None
+    # non-lattice roles ignored
+    texts = [_el("Text", f"t{i}", (100 + i * 50, 100, 40, 20)) for i in range(16)]
+    assert ch.infer_lattice(texts, (0, 0, 1200, 800)) is None
+
+
+def test_overlay_numbered_grid_runs():
+    from PIL import Image
+
+    img = Image.new("RGB", (400, 400), (255, 255, 255))
+    out = ch.overlay_grid(img, (0, 0, 400, 400), (0, 0), 4, 4, numbered=True)
+    assert out.size == (400, 400) and out.mode == "RGB"
+    # numbered overlay should have MORE red pixels than lettered (big numbers)
+    lettered = ch.overlay_grid(img, (0, 0, 400, 400), (0, 0), 4, 4)
+    def redpx(im):
+        return sum(1 for p in im.getdata() if p[0] > 200 and p[1] < 120)
+    assert redpx(out) > redpx(lettered)
+
+
+def test_challenge_answer_numbered_cells(home, monkeypatch):
+    """End-to-end (mocked): numbered grid state + cells="1 16" clicks the
+    right centers and clears."""
+    grid = {
+        "rect": [100, 100, 400, 400],
+        "rows": 4, "cols": 4, "mode": "numbers",
+        "origin": [100, 100], "img_w": 400, "img_h": 400,
+    }
+    st.record_challenge({
+        "hwnd": 42, "window_rect": [0, 0, 1200, 800],
+        "rect": [100, 100, 400, 400], "kind": "grid",
+        "grid": grid, "title": "t", "proc": "chrome.exe",
+    })
+    monkeypatch.setattr(
+        win, "window_info",
+        lambda hwnd: win.WindowInfo(hwnd, "t", 1, "chrome.exe", (0, 0, 1200, 800), False, True),
+    )
+    monkeypatch.setattr(win, "set_foreground", lambda hwnd: None)
+    monkeypatch.setattr(api.safety, "check_before_action", lambda: None)
+    monkeypatch.setattr(api.safety, "log_action", lambda rec: None)
+    monkeypatch.setattr(api.time, "sleep", lambda s: None)
+    monkeypatch.setattr(api.random, "uniform", lambda a, b: 0.2)
+    monkeypatch.setattr(
+        api, "observe_data",
+        lambda *a, **k: {"window": {"title": "t", "rect": [0, 0, 1200, 800]}, "elements": []},
+    )
+    monkeypatch.setattr(ch, "detect_challenge", lambda *a, **k: None)
+    clicks = []
+    monkeypatch.setattr(api._input, "click", lambda x, y: clicks.append((x, y)))
+
+    out = api.challenge_answer(1, cells="1 16", submit=True)
+    # 4x4 over 400x400 at (100,100): tile 1 -> (150,150), tile 16 -> (450,450)
+    assert clicks == [(150, 150), (450, 450)]
+    assert "challenge cleared" in out
+
+
+def test_challenge_answer_numbered_rejects_lettered(home, monkeypatch):
+    grid = {"rect": [0, 0, 400, 400], "rows": 4, "cols": 4, "mode": "numbers"}
+    st.record_challenge({
+        "hwnd": 42, "window_rect": [0, 0, 1200, 800],
+        "rect": [0, 0, 400, 400], "kind": "grid",
+        "grid": grid, "title": "t", "proc": "chrome.exe",
+    })
+    monkeypatch.setattr(
+        win, "window_info",
+        lambda hwnd: win.WindowInfo(hwnd, "t", 1, "chrome.exe", (0, 0, 1200, 800), False, True),
+    )
+    with pytest.raises(WindesktopctlError, match="NUMBERED"):
+        api.challenge_answer(1, cells="B2")
+
+
+def test_challenge_answer_lettered_rejects_numbers(home, monkeypatch):
+    grid = {"rect": [0, 0, 400, 400], "rows": 4, "cols": 4, "mode": "letters"}
+    st.record_challenge({
+        "hwnd": 42, "window_rect": [0, 0, 1200, 800],
+        "rect": [0, 0, 400, 400], "kind": "grid",
+        "grid": grid, "title": "t", "proc": "chrome.exe",
+    })
+    monkeypatch.setattr(
+        win, "window_info",
+        lambda hwnd: win.WindowInfo(hwnd, "t", 1, "chrome.exe", (0, 0, 1200, 800), False, True),
+    )
+    with pytest.raises(WindesktopctlError):
+        api.challenge_answer(1, cells="3 8")

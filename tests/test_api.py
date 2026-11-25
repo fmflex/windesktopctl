@@ -3,10 +3,10 @@ No real desktop interaction (win.* is mocked where needed)."""
 
 import pytest
 
-from deskctl.core import DeskctlError
-from deskctl.core import api
-from deskctl.core import elements as el
-from deskctl.core import windows as win
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import api
+from windesktopctl.core import elements as el
+from windesktopctl.core import windows as win
 
 
 def _win(hwnd, title, proc="app.exe"):
@@ -34,7 +34,7 @@ def test_resolve_title_unique_substring(monkeypatch):
 def test_resolve_title_ambiguous_lists_candidates(monkeypatch):
     wins = [_win(i, f"Project {i} - Editor") for i in range(1, 11)]
     monkeypatch.setattr(win, "list_windows", lambda: wins)
-    with pytest.raises(DeskctlError) as ei:
+    with pytest.raises(WindesktopctlError) as ei:
         api._resolve_title("project")
     msg = str(ei.value)
     assert "ambiguous" in msg
@@ -46,7 +46,7 @@ def test_resolve_title_ambiguous_lists_candidates(monkeypatch):
 
 def test_resolve_title_no_match(monkeypatch):
     monkeypatch.setattr(win, "list_windows", lambda: [_win(1, "Foo")])
-    with pytest.raises(DeskctlError, match="no visible window"):
+    with pytest.raises(WindesktopctlError, match="no visible window"):
         api._resolve_title("zzz")
 
 

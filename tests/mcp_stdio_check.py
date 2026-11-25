@@ -1,4 +1,4 @@
-"""MCP-level check over stdio: spawn deskctl-mcp, list tools, call windows,
+"""MCP-level check over stdio: spawn windesktopctl-mcp, list tools, call windows,
 observe, screenshot (expect image content back). Run:
 
     .venv\\Scripts\\python tests\\mcp_stdio_check.py
@@ -14,12 +14,12 @@ from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-EXE = ROOT / ".venv" / "Scripts" / "deskctl-mcp.exe"
+EXE = ROOT / ".venv" / "Scripts" / "windesktopctl-mcp.exe"
 
 
 async def main() -> int:
     if not EXE.exists():
-        print("deskctl-mcp.exe not found - run `pip install -e .` first")
+        print("windesktopctl-mcp.exe not found - run `pip install -e .` first")
         return 1
     params = StdioServerParameters(command=str(EXE), args=[])
     async with stdio_client(params) as (read, write):

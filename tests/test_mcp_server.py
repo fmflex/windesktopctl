@@ -1,10 +1,10 @@
-"""Unit tests for mcp_server.py - DESKCTL_TOOLS filter + host allowlist."""
+"""Unit tests for mcp_server.py - WINDESKTOPCTL_TOOLS filter + host allowlist."""
 
 import asyncio
 
 import pytest
 
-from deskctl.mcp_server import _http_allowed_hosts, create_server
+from windesktopctl.mcp_server import _http_allowed_hosts, create_server
 
 
 def _tool_names(server) -> set[str]:
@@ -15,7 +15,7 @@ def _tool_names(server) -> set[str]:
 
 
 def test_all_tools_by_default(monkeypatch):
-    monkeypatch.delenv("DESKCTL_TOOLS", raising=False)
+    monkeypatch.delenv("WINDESKTOPCTL_TOOLS", raising=False)
     names = _tool_names(create_server())
     assert names == {
         "observe", "screenshot", "act", "windows", "focus", "wait_for",
@@ -30,7 +30,7 @@ def test_tools_allowlist_arg():
 
 
 def test_tools_env_filter(monkeypatch):
-    monkeypatch.setenv("DESKCTL_TOOLS", "observe, act ,bogus")
+    monkeypatch.setenv("WINDESKTOPCTL_TOOLS", "observe, act ,bogus")
     names = _tool_names(create_server())
     assert names == {"observe", "act"}
 

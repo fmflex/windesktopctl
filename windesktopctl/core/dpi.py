@@ -1,4 +1,4 @@
-"""Per-monitor DPI awareness. Runs once at deskctl.core import, before any
+"""Per-monitor DPI awareness. Runs once at windesktopctl.core import, before any
 capture or UIA work, so all coordinates are physical virtual-screen pixels."""
 
 import ctypes

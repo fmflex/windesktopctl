@@ -1,4 +1,4 @@
-"""MCP HTTP check: start `deskctl-mcp --http` with DESKCTL_TOKEN, confirm
+"""MCP HTTP check: start `windesktopctl-mcp --http` with WINDESKTOPCTL_TOKEN, confirm
 unauthenticated requests get 401 and a correct Bearer token gets through.
 Run:
 
@@ -14,9 +14,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXE = ROOT / ".venv" / "Scripts" / "deskctl-mcp.exe"
+EXE = ROOT / ".venv" / "Scripts" / "windesktopctl-mcp.exe"
 PORT = 18765
-TOKEN = "deskctl-check-token"
+TOKEN = "windesktopctl-check-token"
 BASE = f"http://127.0.0.1:{PORT}"
 
 INIT = {
@@ -26,7 +26,7 @@ INIT = {
     "params": {
         "protocolVersion": "2025-03-26",
         "capabilities": {},
-        "clientInfo": {"name": "deskctl-check", "version": "0"},
+        "clientInfo": {"name": "windesktopctl-check", "version": "0"},
     },
 }
 HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
@@ -42,12 +42,12 @@ def _port_open() -> bool:
 
 def main() -> int:
     if not EXE.exists():
-        print("deskctl-mcp.exe not found - run `pip install -e .` first")
+        print("windesktopctl-mcp.exe not found - run `pip install -e .` first")
         return 1
     import httpx
 
     env = dict(os.environ)
-    env["DESKCTL_TOKEN"] = TOKEN
+    env["WINDESKTOPCTL_TOKEN"] = TOKEN
     proc = subprocess.Popen(
         [str(EXE), "--http", "--host", "127.0.0.1", "--port", str(PORT)],
         env=env,

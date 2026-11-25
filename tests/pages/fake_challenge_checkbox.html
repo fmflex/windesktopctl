@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>deskctl-test-challenge-checkbox</title>
+<title>windesktopctl-test-challenge-checkbox</title>
 <style>
   body { font-family: Arial, sans-serif; background:#f4f6f8; margin:0; }
   #challenge { max-width: 480px; margin: 100px auto; background:#fff;
@@ -18,7 +18,7 @@
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     const tok = (location.hash || '#x').slice(1) || 'x';
-    document.title = 'deskctl-test-challenge-checkbox-' + tok;
+    document.title = 'windesktopctl-test-challenge-checkbox-' + tok;
     document.getElementById('cb').addEventListener('change', (e) => {
       if (e.target.checked) {
         document.getElementById('result').textContent = 'PASSED';

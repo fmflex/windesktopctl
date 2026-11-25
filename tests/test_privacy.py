@@ -2,15 +2,15 @@
 
 import pytest
 
-from deskctl.core import DeskctlError
-from deskctl.core import privacy
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import privacy
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("DESKCTL_HOME", str(tmp_path / "deskctl"))
-    monkeypatch.delenv("DESKCTL_EXCLUDE", raising=False)
-    return tmp_path / "deskctl"
+    monkeypatch.setenv("WINDESKTOPCTL_HOME", str(tmp_path / "windesktopctl"))
+    monkeypatch.delenv("WINDESKTOPCTL_EXCLUDE", raising=False)
+    return tmp_path / "windesktopctl"
 
 
 def test_default_exclusions(home):
@@ -26,16 +26,16 @@ def test_exclusion_normalization(home):
     assert privacy.is_excluded_proc("keepassxc")
     assert not privacy.is_excluded_proc("keepassxcer.exe")
     import os
-    os.environ["DESKCTL_EXCLUDE"] = "MyVault.exe, other tool "
+    os.environ["WINDESKTOPCTL_EXCLUDE"] = "MyVault.exe, other tool "
     assert privacy.is_excluded_proc("myvault")
     assert privacy.is_excluded_proc("other tool")
     assert privacy.is_excluded_proc("1password.exe")  # defaults still apply
-    del os.environ["DESKCTL_EXCLUDE"]
+    del os.environ["WINDESKTOPCTL_EXCLUDE"]
 
 
 def test_check_window_allowed_by_proc(home):
     privacy.check_window_allowed(123, "Vault", "notepad.exe")  # no raise
-    with pytest.raises(DeskctlError, match="privacy"):
+    with pytest.raises(WindesktopctlError, match="privacy"):
         privacy.check_window_allowed(123, "Vault", "bitwarden.exe")
 
 

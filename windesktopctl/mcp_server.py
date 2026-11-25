@@ -1,7 +1,7 @@
-"""deskctl MCP server.
+"""windesktopctl MCP server.
 
 Default: stdio transport (for `devin mcp add`). `--http` serves Streamable
-HTTP on 127.0.0.1 and requires DESKCTL_TOKEN (Bearer auth middleware) plus
+HTTP on 127.0.0.1 and requires WINDESKTOPCTL_TOKEN (Bearer auth middleware) plus
 Host-header validation against DNS rebinding (--allowed-host extends the
 allowlist for tunnel hostnames).
 
@@ -19,6 +19,7 @@ import functools
 import hmac
 import os
 import sys
+import time
 
 
 def _silence_uiautomation() -> None:
@@ -36,7 +37,7 @@ def _silence_uiautomation() -> None:
 
 
 INSTRUCTIONS = """\
-deskctl controls the user's Windows desktop locally (no LLM inside).
+windesktopctl controls the user's Windows desktop locally (no LLM inside).
 
 Workflow:
 - Call observe() FIRST to get a compact text map of on-screen UI elements
@@ -45,7 +46,7 @@ Workflow:
   state flags (focused/disabled/checked/expanded/collapsed/selected/
   password) and scroll containers appear as role "Scroll" with v=/h= percent.
 - Password fields never expose their value. Password-manager processes
-  (1Password, KeePass, Bitwarden, Enpass + DESKCTL_EXCLUDE) are never
+  (1Password, KeePass, Bitwarden, Enpass + WINDESKTOPCTL_EXCLUDE) are never
   observed; their rects are blacked out in screen captures.
 - Call observe(dom=True) for browser pages (chrome/msedge/brave/vivaldi/
   opera/firefox) to get web-content elements instead of browser chrome.
@@ -64,12 +65,13 @@ Workflow:
 - browser() drives Chromium windows: info (title+URL+tabs), tabs, tab
   (select by index/title), text (whole page incl. offscreen, no scrolling),
   navigate (URL).
-- HUMAN CHALLENGES (CAPTCHA / "verify you are human"): deskctl NEVER solves
+- HUMAN CHALLENGES (CAPTCHA / "verify you are human"): windesktopctl NEVER solves
   or guesses them - it cannot verify an answer really came from the user;
   that is an agent-instruction contract. When observe() prints "!! challenge
   detected", STOP acting on that page: call challenge(), show the returned
   image to the user, wait for their reply, and pass it VERBATIM to
-  challenge_answer() (cells like "B3 C4", text, or both). act()/window()/
+  challenge_answer() (tile numbers like "3 8 14" on numbered grids, or
+  lettered cells like "B3 C4"; text, or both). act()/window()/
   browser tab|navigate refuse on challenge pages until it clears; only
   challenge_answer() may input there. If you want per-answer human approval,
   set a Devin permission "ask" rule on challenge_answer.
@@ -85,41 +87,95 @@ Workflow:
 
 class BearerAuthMiddleware:
     """Pure ASGI middleware: require `Authorization: Bearer <token>` on every
-    HTTP/WebSocket request; 401 otherwise."""
+    HTTP/WebSocket request; 401 otherwise.
 
-    def __init__(self, app, token: str):
+    ``token`` is a static string or a callable returning the current token
+    (TokenProvider re-reads the token file when its mtime changes, so
+    `token --rotate` locks out old clients without a restart).
+
+    Throttle: more than FAIL_LIMIT failed auths inside FAIL_WINDOW seconds
+    bans ALL requests with 429 for BAN_SECONDS. Each failure is logged to
+    stderr with client address + Host header - never the presented token.
+    """
+
+    FAIL_LIMIT = 10
+    FAIL_WINDOW = 60.0
+    BAN_SECONDS = 60.0
+
+    def __init__(self, app, token):
         self.app = app
-        self._expected = ("Bearer " + token).encode("utf-8")
+        if callable(token):
+            self._provider = token
+        else:
+            static = str(token)
+            self._provider = lambda: static
+        self._failures: list[float] = []
+        self._banned_until = 0.0
+
+    def _respond(self, send, status: int, body: bytes):
+        return send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
+        now = time.monotonic()
+        if now < self._banned_until:
+            body = b'{"error":"too many failed auth attempts"}'
+            await self._respond(send, 429, body)
+            await send({"type": "http.response.body", "body": body})
+            return
+        expected = ("Bearer " + self._provider()).encode("utf-8")
         auth = b""
+        host = b""
         for k, v in scope.get("headers") or []:
-            if k.lower() == b"authorization":
+            kl = k.lower()
+            if kl == b"authorization":
                 auth = v
-                break
-        if not hmac.compare_digest(auth, self._expected):
-            body = b'{"error":"unauthorized"}'
-            await send(
-                {
-                    "type": "http.response.start",
-                    "status": 401,
-                    "headers": [
-                        (b"content-type", b"application/json"),
-                        (b"content-length", str(len(body)).encode()),
-                    ],
-                }
+            elif kl == b"host":
+                host = v
+        if not hmac.compare_digest(auth, expected):
+            self._failures.append(now)
+            cutoff = now - self.FAIL_WINDOW
+            self._failures = [t for t in self._failures if t > cutoff]
+            banned = False
+            if len(self._failures) > self.FAIL_LIMIT:
+                self._banned_until = now + self.BAN_SECONDS
+                banned = True
+            client = scope.get("client")
+            addr = f"{client[0]}:{client[1]}" if client else "?"
+            try:
+                host_s = host.decode("utf-8", "replace")
+            except Exception:
+                host_s = "?"
+            print(
+                f"windesktopctl: auth failure from {addr} host={host_s!r}",
+                file=sys.stderr,
+                flush=True,
             )
+            if banned:
+                body = b'{"error":"too many failed auth attempts"}'
+                await self._respond(send, 429, body)
+            else:
+                body = b'{"error":"unauthorized"}'
+                await self._respond(send, 401, body)
             await send({"type": "http.response.body", "body": body})
             return
         await self.app(scope, receive, send)
 
 
 def _env_tool_filter() -> set[str] | None:
-    """DESKCTL_TOOLS: comma-separated allowlist of tool names (None = all)."""
-    raw = os.environ.get("DESKCTL_TOOLS", "").strip()
+    """WINDESKTOPCTL_TOOLS: comma-separated allowlist of tool names (None = all)."""
+    raw = os.environ.get("WINDESKTOPCTL_TOOLS", "").strip()
     if not raw:
         return None
     return {p.strip() for p in raw.split(",") if p.strip()}
@@ -130,9 +186,9 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
     from mcp.server.fastmcp import FastMCP
     from mcp.server.transport_security import TransportSecuritySettings
 
-    from deskctl.core import DeskctlError
-    from deskctl.core import api
-    from deskctl.core import worker
+    from windesktopctl.core import WindesktopctlError
+    from windesktopctl.core import api
+    from windesktopctl.core import worker
 
     ts = None
     if allowed_hosts is not None:
@@ -141,7 +197,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
             allowed_hosts=list(allowed_hosts),
         )
 
-    mcp = FastMCP("deskctl", instructions=INSTRUCTIONS, transport_security=ts)
+    mcp = FastMCP("windesktopctl", instructions=INSTRUCTIONS, transport_security=ts)
 
     def _call(fn, *args):
         return worker.submit(fn, *args).result()
@@ -150,7 +206,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, functools.partial(_call, fn, *args))
 
-    def _err(e: DeskctlError) -> str:
+    def _err(e: WindesktopctlError) -> str:
         return f"error: {e}"
 
     async def observe(
@@ -167,7 +223,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         supported browsers. Returns element ids usable as act() targets."""
         try:
             return await _acall(api.observe, window, mode, max_elements, dom)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def screenshot(
@@ -186,7 +242,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
 
         try:
             data, info = await _acall(api.screenshot, target, max_width, marks, fmt)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
         return [Image(data=data, format=fmt), info]
 
@@ -211,7 +267,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
             return await _acall(
                 api.act, action, target, text, keys, amount, to, horizontal
             )
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def windows() -> str:
@@ -219,7 +275,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         [focused] marker. Use with focus(hwnd_or_title)."""
         try:
             return await _acall(api.windows)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def focus(window: str) -> str:
@@ -227,7 +283,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         substring)."""
         try:
             return await _acall(api.focus, window)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def wait_for(
@@ -244,7 +300,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         "timeout after Ns: <cond> not met"."""
         try:
             return await _acall(api.wait_for, cond, value, timeout, window)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def window(
@@ -260,7 +316,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         safety gate as act()."""
         try:
             return await _acall(api.window, action, window, x, y, width, height)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def launch(target: str) -> str:
@@ -269,7 +325,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         windows() line, or "launched; no new window detected"."""
         try:
             return await _acall(api.launch, target)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def browser(
@@ -290,27 +346,37 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         the change and returns fresh info. tab/navigate are gated like act()."""
         try:
             return await _acall(api.browser, action, value, window, max_chars)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def challenge(
         window: str = "focused",
         rows: int | None = None,
         cols: int | None = None,
+        region: str | None = None,
+        grid: str | None = None,
     ):
         """Capture a human-verification challenge (CAPTCHA / 'verify you are
-        human') as an image with a labeled grid overlay (rows A.., cols 1..,
-        ~70px cells; rows/cols override). Re-detects on a fresh observe; if
-        nothing is detected it still captures the content area (kind=unknown)
-        because the user may have asked for it. Returns the PNG plus an info
-        line with the challenge id. YOU MUST: show this image to the user,
-        wait for their reply, and pass it verbatim to challenge_answer().
-        deskctl NEVER solves challenges itself."""
+        human') as an image with a labeled grid overlay. Re-detects on a
+        fresh observe; if nothing is detected it still captures the content
+        area (kind=unknown). Returns the PNG plus an info line with the
+        challenge id.
+
+        Grid kinds with a regular tile lattice auto-switch to NUMBERED mode
+        (cells 1..N, user answers "3 8 14"). Otherwise cells are lettered
+        (A1-style). region="C4:I10" re-captures a sub-area of the PREVIOUS
+        capture (zoom into tiles - choosing region/grid is layout work and
+        is allowed). grid="4x4" forces an exact numbered RxC grid over the
+        region or current rect. YOU MUST: show this image to the user, wait
+        for their reply, and pass it verbatim to challenge_answer().
+        windesktopctl NEVER solves challenges itself."""
         from mcp.server.fastmcp import Image
 
         try:
-            data, info = await _acall(api.challenge, window, rows, cols)
-        except DeskctlError as e:
+            data, info = await _acall(
+                api.challenge, window, rows, cols, region, grid
+            )
+        except WindesktopctlError as e:
             return _err(e)
         return [Image(data=data, format="png"), info]
 
@@ -333,21 +399,21 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         challenges yourself."""
         try:
             return await _acall(api.challenge_answer, id, cells, text, submit, enter)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def pause() -> str:
-        """Pause all deskctl actions (also toggled by Ctrl+Alt+Shift+K)."""
+        """Pause all windesktopctl actions (also toggled by Ctrl+Alt+Shift+K)."""
         try:
             return await _acall(api.pause)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def resume() -> str:
         """Resume actions after pause()."""
         try:
             return await _acall(api.resume)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     async def status() -> str:
@@ -355,7 +421,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         state freshness."""
         try:
             return await _acall(api.status)
-        except DeskctlError as e:
+        except WindesktopctlError as e:
             return _err(e)
 
     tool_fns = {
@@ -385,7 +451,7 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         unknown = allow - known
         if unknown:
             print(
-                f"deskctl-mcp: DESKCTL_TOOLS names unknown tools, ignored: {sorted(unknown)}",
+                f"windesktopctl-mcp: WINDESKTOPCTL_TOOLS names unknown tools, ignored: {sorted(unknown)}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -410,10 +476,17 @@ def _http_allowed_hosts(host: str, extra: list[str]) -> list[str]:
     return out
 
 
+def build_http_app(allowed_hosts: list[str] | None, token_provider) -> object:
+    """FastMCP streamable-HTTP app wrapped in bearer auth. Shared by
+    `windesktopctl-mcp --http` and `windesktopctl serve`."""
+    server = create_server(allowed_hosts=allowed_hosts)
+    return BearerAuthMiddleware(server.streamable_http_app(), token_provider)
+
+
 def main(argv=None) -> int:
     _silence_uiautomation()
 
-    ap = argparse.ArgumentParser(prog="deskctl-mcp")
+    ap = argparse.ArgumentParser(prog="windesktopctl-mcp")
     ap.add_argument("--http", action="store_true", help="serve Streamable HTTP instead of stdio")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8765)
@@ -426,24 +499,21 @@ def main(argv=None) -> int:
     )
     args = ap.parse_args(argv)
 
-    from deskctl.core import safety
+    from windesktopctl.core import safety
+    from windesktopctl.core import token as tok
 
     safety.start_hotkey_guard()
 
     allowed_hosts = _http_allowed_hosts(args.host, args.allowed_host) if args.http else None
-    server = create_server(allowed_hosts=allowed_hosts)
 
     if args.http:
-        token = os.environ.get("DESKCTL_TOKEN", "").strip()
-        if not token:
-            print("deskctl-mcp: --http requires DESKCTL_TOKEN env var", file=sys.stderr)
-            return 2
+        app = build_http_app(allowed_hosts, tok.TokenProvider())
         import uvicorn
 
-        app = BearerAuthMiddleware(server.streamable_http_app(), token)
         uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
+    server = create_server(allowed_hosts=allowed_hosts)
     server.run()  # stdio
     return 0
 

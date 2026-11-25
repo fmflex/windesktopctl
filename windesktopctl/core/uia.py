@@ -7,7 +7,7 @@ elements.from_uia_records:
   control-view descendant with all needed properties cached; we filter and
   format locally. Much faster than per-element COM walks on big trees.
 - ``_walk_tree``: the original uiautomation BFS walker, kept as fallback and
-  selectable via ``DESKCTL_UIA=walk|cached``.
+  selectable via ``WINDESKTOPCTL_UIA=walk|cached``.
 
 Runs on the core worker thread (COM initialized there).
 """
@@ -18,8 +18,8 @@ import os
 import time
 from collections import deque
 
-from deskctl.core import DeskctlError
-from deskctl.core import elements as el
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import elements as el
 
 MAX_DEPTH = 25
 TIME_BUDGET = 3.0  # seconds, wall clock (walker path only)
@@ -71,8 +71,8 @@ _CT_NAMES: dict[int, str] | None = None
 
 
 def _mode() -> tuple[str, bool]:
-    """(mode, forced). DESKCTL_UIA=walk|cached forces; otherwise default."""
-    raw = os.environ.get("DESKCTL_UIA", "").strip().lower()
+    """(mode, forced). WINDESKTOPCTL_UIA=walk|cached forces; otherwise default."""
+    raw = os.environ.get("WINDESKTOPCTL_UIA", "").strip().lower()
     if raw in ("walk", "cached"):
         return raw, True
     return DEFAULT_MODE, False
@@ -302,13 +302,13 @@ def walk_cached(
 
     root = uia.ElementFromHandle(int(hwnd))
     if root is None:
-        raise DeskctlError(f"UIA: cannot get element for hwnd {hwnd}")
+        raise WindesktopctlError(f"UIA: cannot get element for hwnd {hwnd}")
 
     scope_root = root
     if dom:
         scope_root = _dom_root_element(uia, core, root)
         if scope_root is None:
-            raise DeskctlError("dom mode: web content (RootWebArea/Document) not found")
+            raise WindesktopctlError("dom mode: web content (RootWebArea/Document) not found")
 
     req = _make_cache_request(uia, core)
     arr = scope_root.FindAllBuildCache(core.TreeScope_Descendants, uia.ControlViewCondition, req)
@@ -447,12 +447,12 @@ def _walk_tree(
     _silence_uiautomation(auto)
     root = auto.ControlFromHandle(int(hwnd))
     if root is None:
-        raise DeskctlError(f"UIA: cannot get control for hwnd {hwnd}")
+        raise WindesktopctlError(f"UIA: cannot get control for hwnd {hwnd}")
 
     if dom:
         dom_root = _dom_control_root(hwnd)
         if dom_root is None:
-            raise DeskctlError("dom mode: web content (RootWebArea/Document) not found")
+            raise WindesktopctlError("dom mode: web content (RootWebArea/Document) not found")
         root = dom_root
 
     records: list[dict] = []
@@ -520,7 +520,7 @@ def _walk_tree(
 def walk(
     hwnd: int, window_rect: tuple[int, int, int, int], dom: bool = False
 ) -> tuple[list[dict], bool]:
-    """Dispatch to the configured UIA path (DESKCTL_UIA=walk|cached)."""
+    """Dispatch to the configured UIA path (WINDESKTOPCTL_UIA=walk|cached)."""
     mode, forced = _mode()
     if mode == "walk":
         return _walk_tree(hwnd, window_rect, dom=dom)
@@ -528,9 +528,9 @@ def walk(
         return walk_cached(hwnd, window_rect, dom=dom)
     except Exception as ex:
         if forced:
-            if isinstance(ex, DeskctlError):
+            if isinstance(ex, WindesktopctlError):
                 raise
-            raise DeskctlError(f"cached UIA failed: {ex}") from ex
+            raise WindesktopctlError(f"cached UIA failed: {ex}") from ex
         # auto mode: fall back to the walker
         return _walk_tree(hwnd, window_rect, dom=dom)
 
@@ -564,10 +564,10 @@ def dom_text_records(hwnd: int) -> list[dict]:
 
     root = uia.ElementFromHandle(int(hwnd))
     if root is None:
-        raise DeskctlError(f"UIA: cannot get element for hwnd {hwnd}")
+        raise WindesktopctlError(f"UIA: cannot get element for hwnd {hwnd}")
     scope_root = _dom_root_element(uia, core, root)
     if scope_root is None:
-        raise DeskctlError("dom mode: web content (RootWebArea/Document) not found")
+        raise WindesktopctlError("dom mode: web content (RootWebArea/Document) not found")
 
     req = uia.CreateCacheRequest()
     for pname in _DOM_TEXT_PROP_NAMES:
@@ -657,7 +657,7 @@ def tab_controls(hwnd: int, window_rect: tuple[int, int, int, int]) -> list[dict
     _silence_uiautomation(auto)
     root = auto.ControlFromHandle(int(hwnd))
     if root is None:
-        raise DeskctlError(f"UIA: cannot get control for hwnd {hwnd}")
+        raise WindesktopctlError(f"UIA: cannot get control for hwnd {hwnd}")
 
     strip_bottom = window_rect[1] + TAB_STRIP_DEPTH
     out: list[dict] = []

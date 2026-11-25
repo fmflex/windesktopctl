@@ -2,7 +2,7 @@
 
 ## Windows-MCP (design reference)
 
-deskctl v2 borrows design ideas from
+windesktopctl v2 borrows design ideas from
 [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) (shallow clone at
 commit `ca70cf7`): the UIA `CacheRequest` property list and
 `FindAllBuildCache` traversal approach (`tree/cache_utils.py`), DOM-mode
@@ -12,7 +12,7 @@ subtree rooting on `AutomationId=="RootWebArea"` / first `Document`
 (`desktop/control.py`, `desktop/control_hooks.py`), and WaitFor-style
 condition polling (`tools/input.py`).
 
-The implementations here are rewritten/simplified for deskctl's architecture
+The implementations here are rewritten/simplified for windesktopctl's architecture
 (single COM worker thread, compact text output); no source files were copied
 verbatim.
 

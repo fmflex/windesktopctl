@@ -6,8 +6,8 @@ as the Ctrl+Alt+Shift+K hotkey (one message loop). Injected events
 (LLMHF_INJECTED / LLKHF_INJECTED - i.e. our own SendInput and tools like
 Sunshine) are ignored; any physical key/mouse-button press or >=40px of
 cumulative mouse movement marks the user active until
-now + DESKCTL_IDLE_SECONDS (default 3). A flusher thread publishes the
-active-until timestamp to %LOCALAPPDATA%\\deskctl\\user_active (<=200ms
+now + WINDESKTOPCTL_IDLE_SECONDS (default 3). A flusher thread publishes the
+active-until timestamp to %LOCALAPPDATA%\\windesktopctl\\user_active (<=200ms
 throttle) so other processes (CLI vs MCP server) see it too, plus a ~1s
 heartbeat file used by status() to report whether detection is live.
 """
@@ -23,10 +23,10 @@ import time
 from ctypes import wintypes as wt
 from datetime import datetime, timezone
 
-from deskctl.core import dpi
-from deskctl.core import state as st
-from deskctl.core import input as _input
-from deskctl.core import DeskctlError
+from windesktopctl.core import dpi
+from windesktopctl.core import state as st
+from windesktopctl.core import input as _input
+from windesktopctl.core import WindesktopctlError
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -90,7 +90,7 @@ _last_mouse_pos: tuple[int, int] | None = None
 
 def idle_seconds() -> float:
     try:
-        v = float(os.environ.get("DESKCTL_IDLE_SECONDS", "3"))
+        v = float(os.environ.get("WINDESKTOPCTL_IDLE_SECONDS", "3"))
     except Exception:
         v = 3.0
     return v if v > 0 else 3.0
@@ -115,7 +115,7 @@ def _file_active_until() -> float:
 
 
 def is_user_active() -> bool:
-    """True while physical input is fresher than DESKCTL_IDLE_SECONDS -
+    """True while physical input is fresher than WINDESKTOPCTL_IDLE_SECONDS -
     in-process hook state OR the shared user_active timestamp file."""
     now = time.time()
     return now < max(_user_active_until, _file_active_until())
@@ -135,12 +135,12 @@ def takeover_live() -> bool:
 def takeover_status() -> str:
     if takeover_live():
         return "live"
-    return "off (run the MCP server or `deskctl guard`)"
+    return "off (run the MCP server or `windesktopctl guard`)"
 
 
 def check_user_takeover() -> None:
     if is_user_active():
-        raise DeskctlError(
+        raise WindesktopctlError(
             f"user is using the PC (physical input {_active_ago():.1f}s ago); retry when idle"
         )
 
@@ -149,12 +149,12 @@ def check_before_action() -> None:
     """Gate every act(): refuse while paused or while the user is physically
     active; slamming the cursor into the top-left corner failsafes."""
     if is_paused():
-        raise DeskctlError("paused - Ctrl+Alt+Shift+K toggles pause; `deskctl resume` clears it")
+        raise WindesktopctlError("paused - Ctrl+Alt+Shift+K toggles pause; `windesktopctl resume` clears it")
     check_user_takeover()
     x, y = _input.cursor_pos()
     if is_failsafe_position(x, y):
         pause()
-        raise DeskctlError(
+        raise WindesktopctlError(
             f"failsafe triggered: cursor at screen corner ({x},{y}); automation paused"
         )
 
@@ -262,7 +262,7 @@ def _install_hooks() -> None:
     _key_hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, _key_proc, hmod, 0)
     if not _mouse_hook or not _key_hook:
         print(
-            f"deskctl: low-level hook install failed (mouse={_mouse_hook} key={_key_hook})",
+            f"windesktopctl: low-level hook install failed (mouse={_mouse_hook} key={_key_hook})",
             file=sys.stderr,
             flush=True,
         )
@@ -335,7 +335,7 @@ def _ensure_flusher() -> None:
         if _flusher_started:
             return
         _flusher_started = True
-    t = threading.Thread(target=_flusher_loop, name="deskctl-flusher", daemon=True)
+    t = threading.Thread(target=_flusher_loop, name="windesktopctl-flusher", daemon=True)
     t.start()
 
 
@@ -350,7 +350,7 @@ def start_hotkey_guard() -> bool:
             return False
         _guard_started = True
     _ensure_flusher()
-    t = threading.Thread(target=_guard_loop, name="deskctl-guard", daemon=True)
+    t = threading.Thread(target=_guard_loop, name="windesktopctl-guard", daemon=True)
     t.start()
     return True
 
@@ -367,7 +367,7 @@ def _guard_loop() -> None:
         None, _HOTKEY_ID, _MOD_CONTROL | _MOD_ALT | _MOD_SHIFT | _MOD_NOREPEAT, _VK_K
     )
     if not hotkey_ok:
-        print("deskctl: failed to register Ctrl+Alt+Shift+K hotkey", file=sys.stderr, flush=True)
+        print("windesktopctl: failed to register Ctrl+Alt+Shift+K hotkey", file=sys.stderr, flush=True)
     msg = wt.MSG()
     try:
         while True:
@@ -377,7 +377,7 @@ def _guard_loop() -> None:
             if msg.message == _WM_HOTKEY and int(msg.wParam) == _HOTKEY_ID:
                 paused = toggle()
                 print(
-                    f"deskctl: {'paused' if paused else 'resumed'} (Ctrl+Alt+Shift+K)",
+                    f"windesktopctl: {'paused' if paused else 'resumed'} (Ctrl+Alt+Shift+K)",
                     file=sys.stderr,
                     flush=True,
                 )

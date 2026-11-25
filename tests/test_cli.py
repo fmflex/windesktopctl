@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from deskctl.cli import main
-from deskctl.core import DeskctlError
-from deskctl.core import api
+from windesktopctl.cli import main
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import api
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def mock_run(monkeypatch):
 
     def fake_run(fn, *args, **kwargs):
         if state["mode"] == "err":
-            raise DeskctlError("boom")
+            raise WindesktopctlError("boom")
         if fn is api.observe_json:
             return json.dumps({
                 "window": {"title": "T", "proc": "p.exe", "hwnd": 1,
@@ -34,7 +34,7 @@ def mock_run(monkeypatch):
             return 'window: "T" p.exe hwnd=1 rect=0,0,10,10 source=uia changed=true ~tokens=1\n[1] Button "OK" @2,2'
         return "plain-result"
 
-    monkeypatch.setattr("deskctl.cli._run", fake_run)
+    monkeypatch.setattr("windesktopctl.cli._run", fake_run)
     return state
 
 

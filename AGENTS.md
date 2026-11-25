@@ -1,25 +1,34 @@
-# deskctl — agent notes
+# windesktopctl — agent notes
 
 Local Windows desktop observe/control helper: UIA text-first, OCR fallback,
-screenshots on demand. MCP server + CLI share `deskctl.core.api`; all core ops
-run on a single COM-initialized worker thread (`deskctl.core.worker`).
+screenshots on demand. MCP server + CLI share `windesktopctl.core.api`; all core ops
+run on a single COM-initialized worker thread (`windesktopctl.core.worker`).
 
 ## Layout
 
-- `deskctl/core/` — dpi, worker, capture (mss), uia (uiautomation; cached
-  `FindAllBuildCache` path + BFS `walk()` fallback, `DESKCTL_UIA` selects),
+- `windesktopctl/core/` — dpi, worker, capture (mss), uia (uiautomation; cached
+  `FindAllBuildCache` path + BFS `walk()` fallback, `WINDESKTOPCTL_UIA` selects),
   ocr (winrt via winocr deps), elements (pure logic + state flags), state
-  (JSON in %LOCALAPPDATA%\deskctl, DESKCTL_HOME overrides), input (ctypes
+  (JSON in %LOCALAPPDATA%\windesktopctl, WINDESKTOPCTL_HOME overrides), input (ctypes
   SendInput, hwheel), windows (list/focus + min/max/restore/close/move/resize),
-  diff, privacy (DESKCTL_EXCLUDE + capture blackouts), safety
-  (pause/failsafe/hotkey/LL-hook takeover), api (high-level ops).
-- `deskctl/mcp_server.py` — 14 FastMCP tools + `--http` Bearer-auth +
-  Host-header allowlist (`--allowed-host`); `DESKCTL_TOOLS` filters tools.
-- `deskctl/core/challenge.py` — pure logic for the human-challenge relay:
-  `detect_challenge`, grid overlay, cell parsing, webhook multipart body.
-  deskctl NEVER solves challenges; `challenge_answer` is the only input
+  diff, privacy (WINDESKTOPCTL_EXCLUDE + capture blackouts), safety
+  (pause/failsafe/hotkey/LL-hook takeover), token (bearer token file/ACL/
+  rotate/live-reload provider), api (high-level ops).
+- `windesktopctl/mcp_server.py` — 14 FastMCP tools + `--http` Bearer-auth
+  (token provider + 429 throttle) + Host-header allowlist (`--allowed-host`);
+  `WINDESKTOPCTL_TOOLS` filters tools. `build_http_app()` is shared.
+- `windesktopctl/serve.py` — `windesktopctl serve` CLI backend: binds
+  127.0.0.1, optional `tailscale serve|funnel --bg <port>` exposure with
+  :443 pre-check and turn-off-only-what-we-enabled cleanup (never `reset`).
+- `windesktopctl/core/challenge.py` — pure logic for the human-challenge relay:
+  `detect_challenge`, grid overlay (lettered + numbered modes), cell/region
+  parsing, lattice inference, webhook multipart body.
+  windesktopctl NEVER solves challenges; `challenge_answer` is the only input
   path while one is active (act/window/browser tab|navigate are gated).
-- `deskctl/cli.py` — argparse CLI (`--json` global), exit 1 on error.
+- `windesktopctl/cli.py` — argparse CLI (`--json` global), exit 1 on error;
+  `token`, `serve`, `guard` subcommands.
+- `scripts/install.ps1`, `scripts/start.ps1`, `start.cmd` — one-command
+  install + serve launchers.
 - `tests/` — pytest unit tests (pure logic) + live/manual check scripts.
 - `THIRD_PARTY_NOTICES.md` — Windows-MCP MIT notice (v2 design borrow).
 
@@ -37,9 +46,9 @@ run on a single COM-initialized worker thread (`deskctl.core.worker`).
 
 - **Never write to stdout in the MCP server process** except MCP protocol —
   uiautomation's logger is neutered in `mcp_server._silence_uiautomation`;
-  diagnostics go to stderr or `%LOCALAPPDATA%\deskctl\actions.log`.
+  diagnostics go to stderr or `%LOCALAPPDATA%\windesktopctl\actions.log`.
 - All screen coords are physical virtual-screen px (process is per-monitor
-  DPI aware via `deskctl.core.dpi`, applied at `deskctl.core` import).
+  DPI aware via `windesktopctl.core.dpi`, applied at `windesktopctl.core` import).
 - Element ids / screenshot mapping live in `state.json`; targets older than
   10 min are refused as stale (`state.OBSERVE_MAX_AGE`, `SHOT_MAX_AGE`). For
   window observes, `resolve_target` also refuses when the hwnd is gone,
@@ -48,8 +57,9 @@ run on a single COM-initialized worker thread (`deskctl.core.worker`).
   (pause flag + failsafe corner + user-takeover via LL hooks; injected input
   ignored, heartbeat file `user_active` shared with CLI processes) and log
   every action to `actions.log`.
-- OCR needs winrt `Windows.Media.Ocr`; it degrades to `DeskctlError` if the
+- OCR needs winrt `Windows.Media.Ocr`; it degrades to `WindesktopctlError` if the
   language pack/engine is missing — observe(mode="auto") falls back gracefully.
-- `DESKCTL_EXCLUDE` adds excluded process names (password managers built-in);
+- `WINDESKTOPCTL_EXCLUDE` adds excluded process names (password managers built-in);
   excluded windows can't be observed and are blacked out of captures.
-- Do NOT commit secrets; `DESKCTL_TOKEN` is env-only for HTTP mode.
+- Do NOT commit secrets; `WINDESKTOPCTL_TOKEN` env overrides the token file
+  for HTTP mode (`token --rotate` live-reloads; >10 auth fails/60s -> 429).

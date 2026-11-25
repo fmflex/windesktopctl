@@ -28,7 +28,7 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
             if _executor is None:
                 _executor = concurrent.futures.ThreadPoolExecutor(
                     max_workers=1,
-                    thread_name_prefix="deskctl-core",
+                    thread_name_prefix="windesktopctl-core",
                     initializer=_init_worker,
                 )
     return _executor

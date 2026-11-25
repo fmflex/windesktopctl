@@ -1,6 +1,6 @@
 """Unit tests for elements.py - pure logic, no desktop interaction."""
 
-from deskctl.core import elements as el
+from windesktopctl.core import elements as el
 
 
 def test_should_keep_interactive_types():

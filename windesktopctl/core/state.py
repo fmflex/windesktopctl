@@ -1,4 +1,4 @@
-"""Persistent state under %LOCALAPPDATA%\\deskctl (DESKCTL_HOME overrides).
+"""Persistent state under %LOCALAPPDATA%\\windesktopctl (WINDESKTOPCTL_HOME overrides).
 
 Holds the last observe element map (so element ids survive across CLI/agent
 processes), the last screenshot mapping (for "i:x,y" image coords), and the
@@ -14,21 +14,21 @@ import re
 import time
 from pathlib import Path
 
-from deskctl.core import DeskctlError
-from deskctl.core import elements as el
-from deskctl.core import windows as win
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import elements as el
+from windesktopctl.core import windows as win
 
 OBSERVE_MAX_AGE = 600.0  # seconds; element ids older than this are stale
 SHOT_MAX_AGE = 600.0
 
 
 def state_dir() -> Path:
-    env = os.environ.get("DESKCTL_HOME")
+    env = os.environ.get("WINDESKTOPCTL_HOME")
     if env:
         d = Path(env)
     else:
         base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        d = Path(base) / "deskctl"
+        d = Path(base) / "windesktopctl"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -171,15 +171,15 @@ def _check_observe_window_fresh(obs: dict) -> None:
         return
     info = win.window_info(hwnd)
     if info is None:
-        raise DeskctlError("window closed; observe again")
+        raise WindesktopctlError("window closed; observe again")
     if win.focused_hwnd() != hwnd:
         win.set_foreground(hwnd)
         info = win.window_info(hwnd)
         if info is None:
-            raise DeskctlError("window closed; observe again")
+            raise WindesktopctlError("window closed; observe again")
     want = obs.get("rect")
     if want is not None and [int(v) for v in info.rect] != [int(v) for v in want]:
-        raise DeskctlError("window moved/resized since observe; observe again")
+        raise WindesktopctlError("window moved/resized since observe; observe again")
 
 
 def resolve_target(spec: str) -> tuple[int, int, str]:
@@ -196,10 +196,10 @@ def resolve_target(spec: str) -> tuple[int, int, str]:
         eid = int(m.group(1))
         obs = get_observe()
         if not obs or now - float(obs.get("ts", 0)) > OBSERVE_MAX_AGE:
-            raise DeskctlError("element map is stale (>10 min); run observe again")
+            raise WindesktopctlError("element map is stale (>10 min); run observe again")
         e = get_element(eid)
         if e is None:
-            raise DeskctlError(f"unknown element id {eid} (not in last observe)")
+            raise WindesktopctlError(f"unknown element id {eid} (not in last observe)")
         _check_observe_window_fresh(obs)
         x, y = e.center()
         label = f'[{eid}] {e.role} "{e.name}"'.rstrip()
@@ -209,7 +209,7 @@ def resolve_target(spec: str) -> tuple[int, int, str]:
     if m:
         shot = get_screenshot()
         if not shot or now - float(shot.get("ts", 0)) > SHOT_MAX_AGE:
-            raise DeskctlError("screenshot mapping is stale (>10 min); take a new screenshot")
+            raise WindesktopctlError("screenshot mapping is stale (>10 min); take a new screenshot")
         ix, iy = int(m.group(1)), int(m.group(2))
         x = shot["origin_x"] + ix * shot["scale"]
         y = shot["origin_y"] + iy * shot["scale"]
@@ -219,7 +219,7 @@ def resolve_target(spec: str) -> tuple[int, int, str]:
     if m:
         return int(m.group(1)), int(m.group(2)), f"{m.group(1)},{m.group(2)}"
 
-    raise DeskctlError(
+    raise WindesktopctlError(
         f'unrecognized target "{spec}" (use element id "12", screen coords "x,y", or image coords "i:x,y")'
     )
 

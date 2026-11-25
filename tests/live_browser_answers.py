@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _live_browser import MANIFEST  # noqa: E402
 from _live_notepad import assert_safe_target, run  # noqa: E402
-from deskctl.core import api, elements as el, state as st  # noqa: E402
-from deskctl.core import challenge as ch  # noqa: E402
+from windesktopctl.core import api, elements as el, state as st  # noqa: E402
+from windesktopctl.core import challenge as ch  # noqa: E402
 
 GRID_ANSWER_TILES = [2, 7, 13]  # 0-based indices of the 🚥 tiles
 TEXT_ANSWER = "K7Q2-X9"
@@ -82,6 +82,7 @@ def main() -> int:
         print(f"{key}: fresh challenge id={cid} grid={grid.get('rows')}x{grid.get('cols')}")
 
         elems = _observe_elems(hwnd)
+        grid_mode = str(grid.get("mode") or "letters")
         if key == "grid":
             picked = []
             for idx in GRID_ANSWER_TILES:
@@ -93,9 +94,13 @@ def main() -> int:
                     print(f"  !! tile {idx} not found in observe")
                     continue
                 cell = _pick_cell(grid, list(tile.rect))
-                print(f"  tile {idx} rect={tile.rect} -> cell {ch.cell_label(*cell) if cell else None}")
-                if cell:
-                    picked.append(ch.cell_label(*cell))
+                if grid_mode == "numbers" and cell:
+                    label = str(ch.cell_number(*cell, int(grid["cols"])))
+                else:
+                    label = ch.cell_label(*cell) if cell else None
+                print(f"  tile {idx} rect={tile.rect} -> {label} (mode={grid_mode})")
+                if label:
+                    picked.append(label)
             answers["grid"] = {"cells": " ".join(picked)}
         elif key == "text":
             answers["text"] = {"text": TEXT_ANSWER}

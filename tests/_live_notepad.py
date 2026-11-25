@@ -23,10 +23,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from deskctl.core import api  # noqa: E402
-from deskctl.core import state as st  # noqa: E402
-from deskctl.core import windows as win  # noqa: E402
-from deskctl.core import worker  # noqa: E402
+from windesktopctl.core import api  # noqa: E402
+from windesktopctl.core import state as st  # noqa: E402
+from windesktopctl.core import windows as win  # noqa: E402
+from windesktopctl.core import worker  # noqa: E402
 
 user32 = ctypes.windll.user32
 WM_CLOSE = 0x0010
@@ -40,7 +40,7 @@ class UnsafeTarget(RuntimeError):
     """Foreground window is not our temp-file Notepad - abort all input."""
 
 
-def make_temp_file(prefix: str = "deskctl_smoke_") -> str:
+def make_temp_file(prefix: str = "windesktopctl_smoke_") -> str:
     """Create an empty temp .txt and return its path (caller deletes it)."""
     fd, path = tempfile.mkstemp(
         prefix=prefix, suffix=".txt", dir=os.environ.get("TEMP") or None
@@ -51,7 +51,7 @@ def make_temp_file(prefix: str = "deskctl_smoke_") -> str:
 
 def assert_safe_target(basename: str):
     """Hard guard: the FOREGROUND window title must contain our temp file's
-    basename (e.g. 'deskctl_smoke_ab12cd.txt - Notepad'), proving typed text
+    basename (e.g. 'windesktopctl_smoke_ab12cd.txt - Notepad'), proving typed text
     lands in our file - not a restored session tab. Returns the hwnd."""
     fg = win.focused_hwnd()
     info = win.window_info(fg) if fg else None
@@ -78,7 +78,7 @@ def find_window_by_title(text: str, timeout: float = 10.0) -> int:
 
 def close_window_dont_save(hwnd: int) -> bool:
     """WM_CLOSE a window; if a save prompt appears, click Don't Save through
-    deskctl itself (dialog buttons are safe: we initiated this close)."""
+    windesktopctl itself (dialog buttons are safe: we initiated this close)."""
     try:
         run(api.window, "close", str(hwnd))
     except Exception as ex:

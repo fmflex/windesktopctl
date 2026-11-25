@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>deskctl-test-challenge-text</title>
+<title>windesktopctl-test-challenge-text</title>
 <style>
   body { font-family: Arial, sans-serif; background:#f4f6f8; margin:0; }
   #challenge { max-width: 520px; margin: 80px auto; background:#fff;
@@ -23,7 +23,7 @@
   const SECRET = 'K7Q2-X9';   // what the user must type, exactly
   document.addEventListener('DOMContentLoaded', () => {
     const tok = (location.hash || '#x').slice(1) || 'x';
-    document.title = 'deskctl-test-challenge-text-' + tok;
+    document.title = 'windesktopctl-test-challenge-text-' + tok;
     document.getElementById('chars').textContent = SECRET;
 
     document.getElementById('submit').addEventListener('click', () => {

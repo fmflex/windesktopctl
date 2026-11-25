@@ -17,7 +17,7 @@ MAX_TEXT = 80  # name/value truncation length
 _STRIP_CATEGORIES = frozenset({"Cc", "Cf", "Co"})
 
 # UIA control types (ControlTypeName minus the "Control" suffix) kept always.
-# "Scroll" is deskctl's own role for vertically/horizontally scrollable
+# "Scroll" is windesktopctl's own role for vertically/horizontally scrollable
 # containers that are not otherwise interactive.
 INTERACTIVE_TYPES = frozenset(
     {

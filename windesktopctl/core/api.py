@@ -1,4 +1,4 @@
-"""High-level deskctl operations.
+"""High-level windesktopctl operations.
 
 Every function here is designed to run ON the core worker thread (submit via
 worker.run / worker.submit from the CLI and MCP server).
@@ -19,19 +19,19 @@ from datetime import datetime, timezone
 
 from PIL import Image, ImageDraw, ImageFont
 
-from deskctl.core import dpi
-from deskctl.core import DeskctlError
-from deskctl.core import capture
-from deskctl.core import challenge as ch
-from deskctl.core import diff
-from deskctl.core import elements as el
-from deskctl.core import input as _input
-from deskctl.core import ocr
-from deskctl.core import privacy
-from deskctl.core import safety
-from deskctl.core import state as st
-from deskctl.core import uia
-from deskctl.core import windows as win
+from windesktopctl.core import dpi
+from windesktopctl.core import WindesktopctlError
+from windesktopctl.core import capture
+from windesktopctl.core import challenge as ch
+from windesktopctl.core import diff
+from windesktopctl.core import elements as el
+from windesktopctl.core import input as _input
+from windesktopctl.core import ocr
+from windesktopctl.core import privacy
+from windesktopctl.core import safety
+from windesktopctl.core import state as st
+from windesktopctl.core import uia
+from windesktopctl.core import windows as win
 
 OBSERVE_STALE = st.OBSERVE_MAX_AGE
 MARKS_MAX_AGE = st.OBSERVE_MAX_AGE
@@ -85,13 +85,13 @@ def _resolve_title(spec: str) -> int:
         return exact[0].hwnd
     matches = [w for w in wins if low in (w.title or "").lower()]
     if not matches:
-        raise DeskctlError(f'no visible window matching "{s}"')
+        raise WindesktopctlError(f'no visible window matching "{s}"')
     if len(matches) > 1:
         cand = "; ".join(
             f'hwnd={w.hwnd} "{w.title}" {w.process or "-"}' for w in matches[:8]
         )
         more = f" (+{len(matches) - 8} more)" if len(matches) > 8 else ""
-        raise DeskctlError(f'ambiguous window "{s}": {len(matches)} matches - {cand}{more}')
+        raise WindesktopctlError(f'ambiguous window "{s}": {len(matches)} matches - {cand}{more}')
     return matches[0].hwnd
 
 
@@ -118,19 +118,19 @@ def _resolve_window(spec, allow_iconic: bool = False) -> dict:
     if low in ("focused", "focus", "foreground", "active"):
         hwnd = win.focused_hwnd()
         if not hwnd:
-            raise DeskctlError("no foreground window")
+            raise WindesktopctlError("no foreground window")
     elif _is_int(s):
         hwnd = int(s)
         if not win.window_info(hwnd):
-            raise DeskctlError(f"no such window hwnd={hwnd}")
+            raise WindesktopctlError(f"no such window hwnd={hwnd}")
     else:
         hwnd = _resolve_title(s)
 
     info = win.window_info(hwnd)
     if info is None:
-        raise DeskctlError(f"window hwnd={hwnd} is gone")
+        raise WindesktopctlError(f"window hwnd={hwnd} is gone")
     if info.iconic and not allow_iconic:
-        raise DeskctlError(f'window "{info.title}" is minimized; restore it first')
+        raise WindesktopctlError(f'window "{info.title}" is minimized; restore it first')
     privacy.check_window_allowed(hwnd, info.title, info.process)
     return {
         "screen": False,
@@ -160,12 +160,12 @@ def _resolve_capture(target) -> tuple[tuple[int, int, int, int], object]:
     if low in ("focused", "focus", "foreground", "active"):
         hwnd = win.focused_hwnd()
         if not hwnd:
-            raise DeskctlError("no foreground window")
+            raise WindesktopctlError("no foreground window")
         info = win.window_info(hwnd)
         if info is None:
-            raise DeskctlError("foreground window is gone")
+            raise WindesktopctlError("foreground window is gone")
         if info.iconic:
-            raise DeskctlError('foreground window is minimized; restore it first')
+            raise WindesktopctlError('foreground window is minimized; restore it first')
         privacy.check_window_allowed(hwnd, info.title, info.process)
         return info.rect, hwnd
 
@@ -173,9 +173,9 @@ def _resolve_capture(target) -> tuple[tuple[int, int, int, int], object]:
         hwnd = int(s)
         info = win.window_info(hwnd)
         if info is None:
-            raise DeskctlError(f"no such window hwnd={hwnd}")
+            raise WindesktopctlError(f"no such window hwnd={hwnd}")
         if info.iconic:
-            raise DeskctlError(f'window "{info.title}" is minimized; restore it first')
+            raise WindesktopctlError(f'window "{info.title}" is minimized; restore it first')
         privacy.check_window_allowed(hwnd, info.title, info.process)
         return info.rect, hwnd
 
@@ -188,9 +188,9 @@ def _resolve_capture(target) -> tuple[tuple[int, int, int, int], object]:
     hwnd = _resolve_title(s)
     info = win.window_info(hwnd)
     if info is None:
-        raise DeskctlError(f"window hwnd={hwnd} is gone")
+        raise WindesktopctlError(f"window hwnd={hwnd} is gone")
     if info.iconic:
-        raise DeskctlError(f'window "{info.title}" is minimized; restore it first')
+        raise WindesktopctlError(f'window "{info.title}" is minimized; restore it first')
     privacy.check_window_allowed(hwnd, info.title, info.process)
     return info.rect, hwnd
 
@@ -250,10 +250,10 @@ def observe_data(window="focused", mode="auto", max_elements=150, dom=False) -> 
     """Structured observe result: window info, source, changed, elements."""
     mode = str(mode).lower()
     if mode not in VALID_MODES:
-        raise DeskctlError(f'mode must be one of {", ".join(VALID_MODES)}')
+        raise WindesktopctlError(f'mode must be one of {", ".join(VALID_MODES)}')
     max_elements = int(max_elements)
     if max_elements < 1:
-        raise DeskctlError("max_elements must be >= 1")
+        raise WindesktopctlError("max_elements must be >= 1")
     dom = bool(dom)
 
     w = _resolve_window(window)
@@ -264,11 +264,11 @@ def observe_data(window="focused", mode="auto", max_elements=150, dom=False) -> 
     if dom and not is_screen:
         proc = (w.get("proc") or "").lower()
         if proc not in _DOM_PROCS:
-            raise DeskctlError(f'dom mode: not a supported browser (process "{proc or "?"}")')
+            raise WindesktopctlError(f'dom mode: not a supported browser (process "{proc or "?"}")')
 
     if is_screen:
         if mode == "uia":
-            raise DeskctlError('"screen" target supports OCR only (mode auto/ocr/both)')
+            raise WindesktopctlError('"screen" target supports OCR only (mode auto/ocr/both)')
         elements, img = _ocr_elements(rect, blackout=True)
         elements = el.dedup(elements)
         source = "ocr"
@@ -318,7 +318,7 @@ def observe_data(window="focused", mode="auto", max_elements=150, dom=False) -> 
                         notes.append(
                             f"(accessibility warming up, retried {retries})"
                         )
-            except DeskctlError as ex:
+            except WindesktopctlError as ex:
                 uia_error = ex
                 if mode == "uia":
                     raise
@@ -335,7 +335,7 @@ def observe_data(window="focused", mode="auto", max_elements=150, dom=False) -> 
                 ocr_elems, img = _ocr_elements(rect)
                 elements = el.dedup(uia_elems + ocr_elems)
                 source = "both" if uia_elems else "ocr"
-            except DeskctlError:
+            except WindesktopctlError:
                 elements, source, img = uia_elems, "uia", None
         else:  # auto
             if uia_error is None and len(uia_elems) >= 5:
@@ -343,7 +343,7 @@ def observe_data(window="focused", mode="auto", max_elements=150, dom=False) -> 
             else:
                 try:
                     ocr_elems, oimg = _ocr_elements(rect)
-                except DeskctlError:
+                except WindesktopctlError:
                     ocr_elems, oimg = [], None
                 if ocr_elems:
                     elements, source, img = ocr_elems, "ocr", oimg
@@ -390,7 +390,7 @@ def observe_data(window="focused", mode="auto", max_elements=150, dom=False) -> 
     if img is None:
         try:
             img, _ = capture.grab_rect(*rect)
-        except DeskctlError:
+        except WindesktopctlError:
             img = None
     changed = _changed_and_store_baseline(img) if img is not None else True
 
@@ -512,10 +512,10 @@ def screenshot(target="focused", max_width=1280, marks=True, fmt="png"):
     """Capture -> (image_bytes, info_str)."""
     fmt = str(fmt).lower()
     if fmt not in ("png", "jpeg"):
-        raise DeskctlError('fmt must be "png" or "jpeg"')
+        raise WindesktopctlError('fmt must be "png" or "jpeg"')
     max_width = int(max_width)
     if max_width < 16:
-        raise DeskctlError("max_width too small")
+        raise WindesktopctlError("max_width too small")
 
     rect, window_key = _resolve_capture(target)
     img, origin = capture.grab_rect(*rect)
@@ -569,7 +569,7 @@ def _gate_challenge_hwnd(hwnd: int) -> None:
     """Refuse actions that target the challenge window itself."""
     chst = st.active_challenge()
     if chst and int(chst.get("hwnd") or 0) == int(hwnd):
-        raise DeskctlError(_CHALLENGE_MSG)
+        raise WindesktopctlError(_CHALLENGE_MSG)
 
 
 def _gate_challenge_act(target, to) -> None:
@@ -583,7 +583,7 @@ def _gate_challenge_act(target, to) -> None:
     if not H:
         return
     if win.focused_hwnd() == H:
-        raise DeskctlError(_CHALLENGE_MSG)
+        raise WindesktopctlError(_CHALLENGE_MSG)
     for spec in (target, to):
         if spec is None:
             continue
@@ -596,10 +596,10 @@ def _gate_challenge_act(target, to) -> None:
             try:
                 x, y, _ = st.resolve_target(spec)
                 bad = _point_in_rect(x, y, chst.get("rect"))
-            except DeskctlError:
+            except WindesktopctlError:
                 bad = False
         if bad:
-            raise DeskctlError(_CHALLENGE_MSG)
+            raise WindesktopctlError(_CHALLENGE_MSG)
 
 
 # -------------------------------------------------------------------- act --
@@ -627,7 +627,7 @@ def _do_act(action, target, text, keys, amount, to, horizontal):
     """Perform the action; returns (message, xy, extra_log_fields)."""
     if action in ("click", "double_click", "right_click", "move"):
         if target is None:
-            raise DeskctlError(f"{action} requires a target")
+            raise WindesktopctlError(f"{action} requires a target")
         x, y, label = st.resolve_target(target)
         if action == "click":
             _input.click(x, y, "left")
@@ -647,7 +647,7 @@ def _do_act(action, target, text, keys, amount, to, horizontal):
 
     if action == "drag":
         if target is None or to is None:
-            raise DeskctlError("drag requires target and to")
+            raise WindesktopctlError("drag requires target and to")
         x1, y1, l1 = st.resolve_target(target)
         x2, y2, l2 = st.resolve_target(to)
         safety.check_before_action()  # re-check right before the drag starts
@@ -656,7 +656,7 @@ def _do_act(action, target, text, keys, amount, to, horizontal):
 
     if action == "scroll":
         if amount is None:
-            raise DeskctlError("scroll requires amount")
+            raise WindesktopctlError("scroll requires amount")
         amt = float(amount)
         if target is not None:
             x, y, label = st.resolve_target(target)
@@ -669,18 +669,18 @@ def _do_act(action, target, text, keys, amount, to, horizontal):
 
     if action == "type":
         if text is None:
-            raise DeskctlError("type requires text")
+            raise WindesktopctlError("type requires text")
         s = str(text)
         _input.type_text(s, user_active=safety.is_user_active)
         return f"ok: typed {len(s)} chars", None, {"text_len": len(s)}
 
     if action == "key":
         if not keys:
-            raise DeskctlError("key requires a combo like 'ctrl+s'")
+            raise WindesktopctlError("key requires a combo like 'ctrl+s'")
         _input.press_combo(str(keys))
         return f"ok: pressed {keys}", None, {"keys": str(keys)}
 
-    raise DeskctlError(
+    raise WindesktopctlError(
         f'unknown action "{action}" '
         "(click, double_click, right_click, move, drag, scroll, type, key)"
     )
@@ -758,7 +758,7 @@ def focus(window) -> str:
     else:
         hwnd = _resolve_title(s)
     if not win.set_foreground(hwnd):
-        raise DeskctlError(f"could not focus hwnd={hwnd}")
+        raise WindesktopctlError(f"could not focus hwnd={hwnd}")
     info = win.window_info(hwnd)
     title = info.title if info else "?"
     return f'focused hwnd={hwnd} "{title}"'
@@ -768,7 +768,7 @@ def window(action, window="focused", x=None, y=None, width=None, height=None) ->
     """minimize | maximize | restore | close | move | resize a window."""
     a = str(action).strip().lower()
     if a not in VALID_WINDOW_ACTIONS:
-        raise DeskctlError(
+        raise WindesktopctlError(
             f'unknown window action "{action}" ({", ".join(VALID_WINDOW_ACTIONS)})'
         )
     # restore/close are meaningful on minimized windows - don't refuse them.
@@ -789,18 +789,18 @@ def window(action, window="focused", x=None, y=None, width=None, height=None) ->
     else:
         info = win.window_info(hwnd)
         if info is None:
-            raise DeskctlError(f"window hwnd={hwnd} is gone")
+            raise WindesktopctlError(f"window hwnd={hwnd} is gone")
         cx, cy, cw, ch = info.rect
         if a == "move" and (x is None or y is None):
-            raise DeskctlError("window move requires x and y")
+            raise WindesktopctlError("window move requires x and y")
         if a == "resize" and (width is None or height is None):
-            raise DeskctlError("window resize requires width and height")
+            raise WindesktopctlError("window resize requires width and height")
         nx = int(x) if x is not None else cx
         ny = int(y) if y is not None else cy
         nw = int(width) if width is not None else cw
         nh = int(height) if height is not None else ch
         if nw <= 0 or nh <= 0:
-            raise DeskctlError("window width/height must be > 0")
+            raise WindesktopctlError("window width/height must be > 0")
         win.set_window_rect(hwnd, nx, ny, nw, nh)
 
     safety.log_action(
@@ -836,7 +836,7 @@ def launch(target) -> str:
     if len(t) >= 2 and t[0] == t[-1] and t[0] in "\"'":
         t = t[1:-1].strip()  # a single quoted path/URL
     if not t:
-        raise DeskctlError("launch requires a target (URL, file path, or command)")
+        raise WindesktopctlError("launch requires a target (URL, file path, or command)")
     safety.check_before_action()
 
     before = {w.hwnd for w in win.list_windows()}
@@ -845,11 +845,11 @@ def launch(target) -> str:
         try:
             os.startfile(t)
         except OSError as ex:
-            raise DeskctlError(f'cannot launch "{t}": {ex}')
+            raise WindesktopctlError(f'cannot launch "{t}": {ex}')
     else:
         argv = _split_command(t)
         if not argv:
-            raise DeskctlError(f'cannot parse launch target "{t}"')
+            raise WindesktopctlError(f'cannot parse launch target "{t}"')
         try:
             proc = subprocess.Popen(
                 argv,
@@ -859,7 +859,7 @@ def launch(target) -> str:
             )
             pid = proc.pid
         except OSError as ex:
-            raise DeskctlError(f'cannot launch "{t}": {ex}')
+            raise WindesktopctlError(f'cannot launch "{t}": {ex}')
 
     deadline = time.monotonic() + LAUNCH_WAIT
     found = None
@@ -891,7 +891,7 @@ def _browser_window(window) -> dict:
     w = _resolve_window(window)
     proc = (w.get("proc") or "").lower()
     if proc not in _DOM_PROCS:
-        raise DeskctlError(
+        raise WindesktopctlError(
             f'browser: not a supported browser (process "{proc or "?"}")'
         )
     return w
@@ -938,14 +938,14 @@ def _resolve_tab(tabs: list[dict], value: str) -> dict:
     same ambiguity rules as window titles (exact > unique > error)."""
     v = str(value or "").strip()
     if not v:
-        raise DeskctlError(
+        raise WindesktopctlError(
             'browser tab requires a value: tab index "t2"/"2" or title substring'
         )
     m = re.fullmatch(r"t?(\d+)", v, re.IGNORECASE)
     if m:
         idx = int(m.group(1))
         if not (1 <= idx <= len(tabs)):
-            raise DeskctlError(f"tab index {idx} out of range (1..{len(tabs)})")
+            raise WindesktopctlError(f"tab index {idx} out of range (1..{len(tabs)})")
         return tabs[idx - 1]
     low = v.lower()
     exact = [t for t in tabs if (t["name"] or "").lower() == low]
@@ -953,13 +953,13 @@ def _resolve_tab(tabs: list[dict], value: str) -> dict:
         return exact[0]
     matches = [t for t in tabs if low in (t["name"] or "").lower()]
     if not matches:
-        raise DeskctlError(f'no tab matching "{v}"')
+        raise WindesktopctlError(f'no tab matching "{v}"')
     if len(matches) > 1:
         cand = "; ".join(
             f't{i + 1} "{t["name"]}"' for i, t in enumerate(matches[:8])
         )
         more = f" (+{len(matches) - 8} more)" if len(matches) > 8 else ""
-        raise DeskctlError(
+        raise WindesktopctlError(
             f'ambiguous tab "{v}": {len(matches)} matches - {cand}{more}'
         )
     return matches[0]
@@ -970,7 +970,7 @@ def _browser_tab(w: dict, value) -> str:
     safety.check_before_action()
     tabs = uia.tab_controls(w["hwnd"], w["rect"])
     if not tabs:
-        raise DeskctlError("no tabs found in the tab strip")
+        raise WindesktopctlError("no tabs found in the tab strip")
     t = _resolve_tab(tabs, value)
     # Prefer SelectionItemPattern.Select; fall back to clicking the center.
     via = "click"
@@ -1081,7 +1081,7 @@ def _browser_text(w: dict, max_chars: int) -> str:
 def _browser_navigate(w: dict, value) -> str:
     url = str(value or "").strip()
     if not url:
-        raise DeskctlError("browser navigate requires a URL")
+        raise WindesktopctlError("browser navigate requires a URL")
     _gate_challenge_hwnd(w["hwnd"])
     safety.check_before_action()
     win.set_foreground(w["hwnd"])
@@ -1132,7 +1132,7 @@ def browser(action, value=None, window="focused", max_chars=4000) -> str:
     """
     a = str(action).strip().lower()
     if a not in _BROWSER_ACTIONS:
-        raise DeskctlError(
+        raise WindesktopctlError(
             f'browser action must be one of {", ".join(_BROWSER_ACTIONS)}'
         )
     w = _browser_window(window)
@@ -1152,15 +1152,15 @@ def browser(action, value=None, window="focused", max_chars=4000) -> str:
 # -------------------------------------------------------------- challenge --
 
 def _notify_webhook(ch_rec: dict, png: bytes) -> str | None:
-    """Optional Discord webhook notify (DESKCTL_NOTIFY_WEBHOOK). Returns a
+    """Optional Discord webhook notify (WINDESKTOPCTL_NOTIFY_WEBHOOK). Returns a
     warning string on failure, None on success/not-configured. The URL is
     never logged or printed."""
-    url = os.environ.get("DESKCTL_NOTIFY_WEBHOOK", "").strip()
+    url = os.environ.get("WINDESKTOPCTL_NOTIFY_WEBHOOK", "").strip()
     if not url:
         return None
     try:
         text = (
-            f'deskctl: challenge id={ch_rec.get("id")} ({ch_rec.get("kind")}) '
+            f'windesktopctl: challenge id={ch_rec.get("id")} ({ch_rec.get("kind")}) '
             f'on "{ch_rec.get("title", "")}". Reply in your agent chat.'
         )
         ctype, body = ch.webhook_multipart("challenge.png", png, text)
@@ -1173,13 +1173,19 @@ def _notify_webhook(ch_rec: dict, png: bytes) -> str | None:
         return f"webhook notify failed ({type(ex).__name__})"
 
 
-def challenge(window="focused", rows=None, cols=None):
-    """Capture the on-screen human challenge with a labeled A1-style grid.
+def challenge(window="focused", rows=None, cols=None, region=None, grid=None):
+    """Capture the on-screen human challenge with a labeled grid.
 
     Re-detects the challenge on a fresh observe; if nothing is detected it
     still captures the web content area (kind=unknown) because the user may
-    have asked for it. Returns (png_bytes, info_str). deskctl NEVER solves
+    have asked for it. Returns (png_bytes, info_str). windesktopctl NEVER solves
     challenges - it only relays the image and types the user's exact reply.
+
+    region: cell range of the PREVIOUS capture, e.g. "C4:I10" - re-captures
+    just that area (zoom into tiles). grid: "RxC" (e.g. "4x4") - draws an
+    exact numbered grid (cells 1..N) over the region/current rect. For grid
+    challenges with no explicit grid=, a regular tile lattice is auto-
+    detected and numbered mode is used on its bounding box.
     """
     w = _resolve_window(window)
     hwnd = w["hwnd"]
@@ -1205,9 +1211,54 @@ def challenge(window="focused", rows=None, cols=None):
         cap_rect = uia.dom_root_rect(hwnd) or wrect
         kind = "unknown"
 
-    r, c = ch.grid_dims(cap_rect, rows, cols)
+    # The full challenge area BEFORE any region/grid zoom or lattice tight
+    # crop - Edit/submit lookups in challenge_answer search this, since the
+    # verify button usually sits outside a tile-only numbered grid.
+    scope_rect = cap_rect
+
+    stored_grid = (old or {}).get("grid") if old and int(old.get("hwnd") or 0) == hwnd else None
+    mode = "letters"
+    numbered = False
+    lat = None
+
+    grid_spec = str(grid).strip() if grid is not None else ""
+    region_spec = str(region).strip() if region is not None else ""
+    if grid_spec or region_spec:
+        # Explicit re-framing needs the previous capture's geometry.
+        if not stored_grid or not stored_grid.get("rect"):
+            raise WindesktopctlError(
+                "region/grid need a previous challenge() capture; call "
+                "challenge() once without them first"
+            )
+        if region_spec:
+            try:
+                cap_rect = ch.parse_region(region_spec, stored_grid)
+            except ValueError as ex:
+                raise WindesktopctlError(str(ex))
+        if grid_spec:
+            try:
+                r, c = ch.parse_grid_spec(grid_spec)
+            except ValueError as ex:
+                raise WindesktopctlError(str(ex))
+            mode = "numbers"
+            numbered = True
+        else:
+            r, c = ch.grid_dims(cap_rect, rows, cols)
+    else:
+        # Auto: image-tile grids get a numbered capture of the lattice bbox.
+        if kind == "grid":
+            lat = ch.infer_lattice(elems, cap_rect)
+            if lat is not None:
+                lr, lc, lbbox = lat
+                cap_rect = lbbox
+                r, c = lr, lc
+                mode = "numbers"
+                numbered = True
+        if not numbered:
+            r, c = ch.grid_dims(cap_rect, rows, cols)
+
     img, origin = capture.grab_rect(*cap_rect)
-    img = ch.overlay_grid(img, cap_rect, origin, r, c)
+    img = ch.overlay_grid(img, cap_rect, origin, r, c, numbered=numbered)
 
     iw, ih = img.size
     longest = max(iw, ih)
@@ -1224,11 +1275,13 @@ def challenge(window="focused", rows=None, cols=None):
             "hwnd": hwnd,
             "window_rect": [int(v) for v in wrect],
             "rect": [int(v) for v in cap_rect],
+            "scope": [int(v) for v in scope_rect],
             "kind": kind,
             "grid": {
                 "rect": [int(v) for v in cap_rect],
                 "rows": r,
                 "cols": c,
+                "mode": mode,
                 "origin": [int(origin[0]), int(origin[1])],
                 "img_w": img.width,
                 "img_h": img.height,
@@ -1241,15 +1294,32 @@ def challenge(window="focused", rows=None, cols=None):
     path = st.state_dir() / f"challenge_{cid}.png"
     path.write_bytes(png)
 
-    last = chr(ord("A") + r - 1) if r <= 26 else str(r)
+    if numbered:
+        grid_desc = f"numbered grid {r}x{c} = tiles 1-{r * c}"
+        ask = (
+            "Show this image to the user and ask for the tile numbers to "
+            'click (e.g. "3 8 14"). Then call challenge_answer with their '
+            "exact reply. Never answer it yourself."
+        )
+    else:
+        last = chr(ord("A") + r - 1) if r <= 26 else str(r)
+        grid_desc = f"grid rows A-{last} x cols 1-{c}"
+        ask = (
+            "Show this image to the user and ask for: grid -> the cells to "
+            'click (e.g. "B3 C4 D2"); text -> the characters and which cell '
+            'the input box is in if not obvious; checkbox -> "click" + cell. '
+            "Then call challenge_answer with their exact reply. Never "
+            "answer it yourself."
+        )
+        if kind == "grid":
+            ask += (
+                ' To zoom into the tiles you may call challenge('
+                'region="C4:I10", grid="4x4") using cells of THIS capture.'
+            )
     info = (
         f'challenge id={cid} kind={kind} on "{el.escape_text(title)}" '
-        f"grid rows A-{last} x cols 1-{c} saved={path} "
-        f"~tokens={img.width * img.height // 750}. "
-        "Show this image to the user and ask for: grid -> the cells to click "
-        '(e.g. "B3 C4 D2"); text -> the characters and which cell the input '
-        'box is in if not obvious; checkbox -> "click" + cell. Then call '
-        "challenge_answer with their exact reply. Never answer it yourself."
+        f"{grid_desc} saved={path} ~tokens={img.width * img.height // 750}. "
+        f"{ask}"
     )
     warn = _notify_webhook(rec, png)
     if warn:
@@ -1283,35 +1353,46 @@ def challenge_answer(id, cells=None, text=None, submit=True, enter=False) -> str
     """
     chst = st.get_challenge()
     if chst is None or int(chst.get("id") or -1) != int(id):
-        raise DeskctlError("stale challenge id; call challenge() again")
+        raise WindesktopctlError("stale challenge id; call challenge() again")
     if time.time() - float(chst.get("ts", 0)) > st.CHALLENGE_MAX_AGE:
-        raise DeskctlError("stale challenge id; call challenge() again")
+        raise WindesktopctlError("stale challenge id; call challenge() again")
     hwnd = int(chst["hwnd"])
     info = win.window_info(hwnd)
     if info is None:
-        raise DeskctlError("challenge window is gone; call challenge() again")
+        raise WindesktopctlError("challenge window is gone; call challenge() again")
     want = chst.get("window_rect")
     if want is not None and [int(v) for v in info.rect] != [int(v) for v in want]:
-        raise DeskctlError(
+        raise WindesktopctlError(
             "challenge window moved/resized; call challenge() again"
         )
 
     grid = chst.get("grid") or {}
     cap_rect = chst.get("rect")
+    # Wider challenge area for Edit/submit lookups - a numbered tile grid's
+    # rect is just the lattice, but the input box / verify button live in
+    # the surrounding challenge container.
+    area_rect = chst.get("scope") or cap_rect
     rows = int(grid.get("rows") or 0)
     cols = int(grid.get("cols") or 0)
+    grid_mode = str(grid.get("mode") or "letters")
     parsed: list[tuple[int, int]] = []
     cell_names: list[str] = []
     if cells is not None and str(cells).strip():
         if not rows or not cols or not cap_rect:
-            raise DeskctlError(
+            raise WindesktopctlError(
                 "no grid stored for this challenge; call challenge() again"
             )
         try:
-            parsed = ch.parse_cells(cells, rows, cols)
+            if grid_mode == "numbers":
+                parsed = ch.parse_numbered_cells(cells, rows, cols)
+            else:
+                parsed = ch.parse_cells(cells, rows, cols)
         except ValueError as ex:
-            raise DeskctlError(str(ex))
-        cell_names = [ch.cell_label(r, c) for r, c in parsed]
+            raise WindesktopctlError(str(ex))
+        if grid_mode == "numbers":
+            cell_names = [str(ch.cell_number(r, c, cols)) for r, c in parsed]
+        else:
+            cell_names = [ch.cell_label(r, c) for r, c in parsed]
 
     text_s = "" if text is None else str(text)
     # Locate the text input before touching anything (only when no cells
@@ -1321,11 +1402,11 @@ def challenge_answer(id, cells=None, text=None, submit=True, enter=False) -> str
         data = observe_data(str(hwnd), "auto", WAIT_MAX_ELEMENTS)
         for d in data["elements"]:
             e = el.Element.from_dict(d)
-            if e.role == "Edit" and _point_in_rect(e.cx, e.cy, cap_rect):
+            if e.role == "Edit" and _point_in_rect(e.cx, e.cy, area_rect):
                 edit_xy = (int(e.cx), int(e.cy))
                 break
         if edit_xy is None:
-            raise DeskctlError(
+            raise WindesktopctlError(
                 "text answer needs the input cell - pass cells= with the box "
                 "cell (no Edit found inside the challenge area)"
             )
@@ -1367,7 +1448,7 @@ def challenge_answer(id, cells=None, text=None, submit=True, enter=False) -> str
     kind = chst.get("kind") or "unknown"
     if submit and kind in ("grid", "text"):
         data_s = observe_data(str(hwnd), "auto", WAIT_MAX_ELEMENTS)
-        rect_s = cap_rect or tuple(data_s["window"]["rect"])
+        rect_s = area_rect or tuple(data_s["window"]["rect"])
         btn = _find_submit_button(data_s["elements"], rect_s)
         if btn is not None:
             time.sleep(random.uniform(0.15, 0.4))
@@ -1468,10 +1549,10 @@ def wait_for(cond="changed", value=None, timeout=10.0, window="focused") -> str:
     gone. Returns a result string; timeout is NOT an error."""
     c = str(cond).strip().lower()
     if c not in VALID_WAIT:
-        raise DeskctlError(f'cond must be one of {", ".join(VALID_WAIT)}')
+        raise WindesktopctlError(f'cond must be one of {", ".join(VALID_WAIT)}')
     timeout = float(timeout)
     if timeout <= 0:
-        raise DeskctlError("timeout must be > 0")
+        raise WindesktopctlError("timeout must be > 0")
     desc = c if value is None else f'{c} "{value}"'
     deadline = time.monotonic() + timeout
     t0 = time.monotonic()
@@ -1525,7 +1606,7 @@ def wait_for(cond="changed", value=None, timeout=10.0, window="focused") -> str:
 
 def pause() -> str:
     safety.pause()
-    return "paused (Ctrl+Alt+Shift+K resumes; `deskctl resume` also works)"
+    return "paused (Ctrl+Alt+Shift+K resumes; `windesktopctl resume` also works)"
 
 
 def resume() -> str:

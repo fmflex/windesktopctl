@@ -1,7 +1,7 @@
 """OCR via winrt Windows.Media.Ocr (wrapped by the winocr dependency).
 
 Runs on the core worker thread. Degrades gracefully: if the OCR engine or
-language pack is unavailable, recognize() raises DeskctlError with a clear
+language pack is unavailable, recognize() raises WindesktopctlError with a clear
 message and observe() callers decide whether to fall back.
 """
 
@@ -11,7 +11,7 @@ import asyncio
 
 from PIL import Image
 
-from deskctl.core import DeskctlError
+from windesktopctl.core import WindesktopctlError
 
 _engine = None
 _engine_failed = False
@@ -28,7 +28,7 @@ def _get_engine():
         from winrt.windows.media.ocr import OcrEngine
     except Exception as ex:
         _engine_failed = True
-        raise DeskctlError(f"OCR unavailable: winrt packages not importable ({ex})")
+        raise WindesktopctlError(f"OCR unavailable: winrt packages not importable ({ex})")
 
     try:
         eng = OcrEngine.try_create_from_user_profile_languages()
@@ -60,7 +60,7 @@ def _get_engine():
             continue
 
     _engine_failed = True
-    raise DeskctlError(
+    raise WindesktopctlError(
         "OCR unavailable: no usable recognizer language "
         f"(available: {', '.join(avail) or 'none'})"
     )
@@ -83,7 +83,7 @@ def recognize(img: Image.Image) -> list[dict]:
     """Recognize text lines in a PIL image.
 
     Returns [{"text": str, "rect": (x, y, w, h)}] with rects in image pixels
-    (caller offsets by capture origin). Raises DeskctlError if OCR is
+    (caller offsets by capture origin). Raises WindesktopctlError if OCR is
     unavailable.
     """
     engine = _get_engine()

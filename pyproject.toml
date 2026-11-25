@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "deskctl"
+name = "windesktopctl"
 version = "0.1.0"
 description = "Local Windows desktop observe/control helper (UIA + OCR + input) exposed as an MCP server and a CLI"
 requires-python = ">=3.11"
@@ -23,11 +23,11 @@ dev = [
 ]
 
 [project.scripts]
-deskctl = "deskctl.cli:main"
-deskctl-mcp = "deskctl.mcp_server:main"
+windesktopctl = "windesktopctl.cli:main"
+windesktopctl-mcp = "windesktopctl.mcp_server:main"
 
 [tool.setuptools.packages.find]
-include = ["deskctl*"]
+include = ["windesktopctl*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

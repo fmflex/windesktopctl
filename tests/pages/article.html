@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>deskctl-test-article</title>
+<title>windesktopctl-test-article</title>
 <style>
   body { font-family: Georgia, serif; max-width: 720px; margin: 2em auto; color: #222; }
   h1 { font-size: 2em; } h2 { font-size: 1.4em; margin-top: 1.6em; }
@@ -14,13 +14,13 @@
   // Unique title token from the URL hash so live tests can guard on it.
   document.addEventListener('DOMContentLoaded', () => {
     const tok = (location.hash || '#x').slice(1) || 'x';
-    document.title = 'deskctl-test-article-' + tok;
+    document.title = 'windesktopctl-test-article-' + tok;
   });
 </script>
 </head>
 <body>
-<h1>Deskctl Test Article</h1>
-<p>This is a local test page for the deskctl browser helpers. It contains
+<h1>Windesktopctl Test Article</h1>
+<p>This is a local test page for the windesktopctl browser helpers. It contains
 ordinary article text, headings, and links - nothing interactive beyond
 navigation. It exists so <code>browser text</code> can be checked for
 headings, links, dedup, and offscreen content without touching the network.</p>

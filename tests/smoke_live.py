@@ -25,10 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # tests/
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root
 
 import _live_notepad as live  # noqa: E402
-from deskctl.core import api  # noqa: E402
-from deskctl.core import state as st  # noqa: E402
-from deskctl.core import windows as win  # noqa: E402
-from deskctl.core import worker  # noqa: E402
+from windesktopctl.core import api  # noqa: E402
+from windesktopctl.core import state as st  # noqa: E402
+from windesktopctl.core import windows as win  # noqa: E402
+from windesktopctl.core import worker  # noqa: E402
 
 
 def run(fn, *a, **k):
@@ -71,7 +71,7 @@ def _char_count():
     return best
 
 
-def verify_text_present(text="hello from deskctl", min_chars=15):
+def verify_text_present(text="hello from windesktopctl", min_chars=15):
     """Fresh observe; PASS if doc value/name contains text OR char count grew."""
     needle = text.lower()
     before = _char_count()
@@ -142,7 +142,7 @@ def input_test():
         if focused_hit is None:
             print("WARN: no element shows the focused flag")
 
-        print(sess.act("type", None, "hello from deskctl"))
+        print(sess.act("type", None, "hello from windesktopctl"))
         time.sleep(0.3)
         print(sess.act("key", None, None, "ctrl+a"))
         time.sleep(0.5)
@@ -173,7 +173,7 @@ def input_test():
 
 
 def main():
-    print("== deskctl smoke_live ==")
+    print("== windesktopctl smoke_live ==")
     timed("windows()", api.windows)
     timed("observe(focused, auto)", api.observe, "focused", "auto", 150)
     timed("observe(focused, ocr)", api.observe, "focused", "ocr", 150)
