@@ -314,7 +314,17 @@ def run(expose: str = "local", port: int = 8765,
     import uvicorn
 
     try:
-        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+        # proxy_headers on + forwarded_allow_ips=127.0.0.1 (the default):
+        # trust X-Forwarded-For only from the local tailscale proxy, so the
+        # per-IP auth throttle sees real client IPs and clients can't spoof.
+        uvicorn.run(
+            app,
+            host="127.0.0.1",
+            port=port,
+            log_level="warning",
+            proxy_headers=True,
+            forwarded_allow_ips="127.0.0.1",
+        )
     except KeyboardInterrupt:
         pass
     finally:

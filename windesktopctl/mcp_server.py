@@ -20,6 +20,7 @@ import hmac
 import os
 import sys
 import time
+from collections import OrderedDict
 
 
 def _silence_uiautomation() -> None:
@@ -85,6 +86,37 @@ Workflow:
 """
 
 
+class _IPState:
+    """Throttle/log state for one client IP."""
+
+    __slots__ = (
+        "fails",
+        "banned_until",
+        "offenses",
+        "offense_until",
+        "last_fail_log",
+        "last_ok_log",
+    )
+
+    def __init__(self) -> None:
+        self.fails: list[float] = []
+        self.banned_until = 0.0
+        self.offenses = 0
+        self.offense_until = 0.0
+        self.last_fail_log = -float("inf")
+        self.last_ok_log = -float("inf")
+
+
+def _fmt_duration(seconds: float) -> str:
+    s = max(0, int(round(seconds)))
+    if s >= 3600:
+        h = s / 3600
+        return f"{int(h)}h" if h == int(h) else f"{h:.1f}h"
+    if s % 60 == 0:
+        return f"{s // 60}m"
+    return f"{s}s"
+
+
 class BearerAuthMiddleware:
     """Pure ASGI middleware: require `Authorization: Bearer <token>` on every
     HTTP/WebSocket request; 401 otherwise.
@@ -93,24 +125,44 @@ class BearerAuthMiddleware:
     (TokenProvider re-reads the token file when its mtime changes, so
     `token --rotate` locks out old clients without a restart).
 
-    Throttle: more than FAIL_LIMIT failed auths inside FAIL_WINDOW seconds
-    bans ALL requests with 429 for BAN_SECONDS. Each failure is logged to
-    stderr with client address + Host header - never the presented token.
+    Throttle is PER CLIENT IP (``scope["client"][0]``; uvicorn rewrites it
+    from X-Forwarded-For only for trusted proxies - ``forwarded_allow_ips``
+    stays at the 127.0.0.1 default, so direct clients cannot spoof it):
+    more than FAIL_LIMIT failed auths from one IP inside FAIL_WINDOW seconds
+    bans THAT IP with 429 for BAN_BASE_SECONDS; each further offense doubles
+    the ban up to BAN_MAX_SECONDS (offenses are remembered for
+    OFFENSE_MEMORY_SECONDS). Bans apply to the IP, so a banned client
+    is refused even with a valid token - but other IPs are unaffected, so a
+    scanner cannot lock out the legitimate client. Tracked IPs are capped at
+    MAX_TRACKED_IPS; the least-recently-active entry is evicted (an evicted
+    ban is simply re-earned by failing again).
+
+    Logging goes to stderr and NEVER includes presented tokens: the first
+    auth failure per IP per FAIL_LOG_WINDOW (path/method/UA<=80 chars/Host),
+    each new ban once, and the first successful auth per IP per
+    AUTH_OK_LOG_WINDOW with the UA.
     """
 
     FAIL_LIMIT = 10
     FAIL_WINDOW = 60.0
-    BAN_SECONDS = 60.0
+    BAN_BASE_SECONDS = 600.0
+    BAN_MAX_SECONDS = 24 * 3600.0
+    OFFENSE_MEMORY_SECONDS = 24 * 3600.0
+    MAX_TRACKED_IPS = 10_000
+    FAIL_LOG_WINDOW = 60.0
+    AUTH_OK_LOG_WINDOW = 600.0
+    _PRUNE_INTERVAL = 1.0
 
-    def __init__(self, app, token):
+    def __init__(self, app, token, clock=time.monotonic):
         self.app = app
         if callable(token):
             self._provider = token
         else:
             static = str(token)
             self._provider = lambda: static
-        self._failures: list[float] = []
-        self._banned_until = 0.0
+        self._clock = clock
+        self._ips: "OrderedDict[str, _IPState]" = OrderedDict()
+        self._last_prune = -float("inf")
 
     def _respond(self, send, status: int, body: bytes):
         return send(
@@ -124,12 +176,88 @@ class BearerAuthMiddleware:
             }
         )
 
+    @staticmethod
+    def _client_ip(scope) -> str:
+        client = scope.get("client")
+        return str(client[0]) if client else "?"
+
+    @staticmethod
+    def _ua(headers) -> str:
+        for k, v in headers or []:
+            if k.lower() == b"user-agent":
+                return v.decode("utf-8", "replace")[:80]
+        return "-"
+
+    def _state(self, ip: str) -> _IPState:
+        st = self._ips.get(ip)
+        if st is None:
+            while len(self._ips) >= self.MAX_TRACKED_IPS:
+                self._ips.popitem(last=False)
+            st = _IPState()
+            self._ips[ip] = st
+        else:
+            self._ips.move_to_end(ip)
+        return st
+
+    def _prune(self, now: float) -> None:
+        """Drop stale entries and empty states; bounded by MAX_TRACKED_IPS."""
+        if now - self._last_prune < self._PRUNE_INTERVAL:
+            return
+        self._last_prune = now
+        fw = now - self.FAIL_WINDOW
+        for st in self._ips.values():
+            if st.fails:
+                st.fails = [t for t in st.fails if t > fw]
+        fl = now - self.FAIL_LOG_WINDOW
+        ol = now - self.AUTH_OK_LOG_WINDOW
+        for ip in [
+            i
+            for i, st in self._ips.items()
+            if not st.fails
+            and st.banned_until <= now
+            and st.offense_until <= now
+            and st.last_fail_log <= fl
+            and st.last_ok_log <= ol
+        ]:
+            del self._ips[ip]
+
+    def _log_fail(self, ip: str, scope, host: bytes, ua: str) -> None:
+        try:
+            host_s = host.decode("utf-8", "replace")
+        except Exception:
+            host_s = "?"
+        print(
+            f"windesktopctl: auth failure from {ip} "
+            f"path={scope.get('path', '?')} method={scope.get('method', '-')} "
+            f"host={host_s!r} ua={ua!r}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def _log_ban(self, ip: str, seconds: float, failures: int) -> None:
+        print(
+            f"windesktopctl: banned {ip} for {_fmt_duration(seconds)} "
+            f"after {failures} failures",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def _log_ok(self, ip: str, ua: str) -> None:
+        print(
+            f"windesktopctl: auth ok from {ip} ua={ua!r}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     async def __call__(self, scope, receive, send):
         if scope.get("type") not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        now = time.monotonic()
-        if now < self._banned_until:
+        now = self._clock()
+        ip = self._client_ip(scope)
+        self._prune(now)
+        st = self._state(ip)
+        if st.banned_until > now:
             body = b'{"error":"too many failed auth attempts"}'
             await self._respond(send, 429, body)
             await send({"type": "http.response.body", "body": body})
@@ -143,34 +271,36 @@ class BearerAuthMiddleware:
                 auth = v
             elif kl == b"host":
                 host = v
-        if not hmac.compare_digest(auth, expected):
-            self._failures.append(now)
-            cutoff = now - self.FAIL_WINDOW
-            self._failures = [t for t in self._failures if t > cutoff]
-            banned = False
-            if len(self._failures) > self.FAIL_LIMIT:
-                self._banned_until = now + self.BAN_SECONDS
-                banned = True
-            client = scope.get("client")
-            addr = f"{client[0]}:{client[1]}" if client else "?"
-            try:
-                host_s = host.decode("utf-8", "replace")
-            except Exception:
-                host_s = "?"
-            print(
-                f"windesktopctl: auth failure from {addr} host={host_s!r}",
-                file=sys.stderr,
-                flush=True,
-            )
-            if banned:
-                body = b'{"error":"too many failed auth attempts"}'
-                await self._respond(send, 429, body)
-            else:
-                body = b'{"error":"unauthorized"}'
-                await self._respond(send, 401, body)
-            await send({"type": "http.response.body", "body": body})
+        if hmac.compare_digest(auth, expected):
+            if now - st.last_ok_log >= self.AUTH_OK_LOG_WINDOW:
+                st.last_ok_log = now
+                self._log_ok(ip, self._ua(scope.get("headers")))
+            await self.app(scope, receive, send)
             return
-        await self.app(scope, receive, send)
+        st.fails = [t for t in st.fails if t > now - self.FAIL_WINDOW]
+        st.fails.append(now)
+        if len(st.fails) > self.FAIL_LIMIT:
+            st.offenses += 1
+            st.offense_until = now + self.OFFENSE_MEMORY_SECONDS
+            ban = min(
+                self.BAN_BASE_SECONDS * (2 ** (st.offenses - 1)),
+                self.BAN_MAX_SECONDS,
+            )
+            st.banned_until = now + ban
+            self._log_ban(ip, ban, len(st.fails))
+            status = 429
+        else:
+            if now - st.last_fail_log >= self.FAIL_LOG_WINDOW:
+                st.last_fail_log = now
+                self._log_fail(ip, scope, host, self._ua(scope.get("headers")))
+            status = 401
+        body = (
+            b'{"error":"too many failed auth attempts"}'
+            if status == 429
+            else b'{"error":"unauthorized"}'
+        )
+        await self._respond(send, status, body)
+        await send({"type": "http.response.body", "body": body})
 
 
 def _env_tool_filter() -> set[str] | None:
@@ -510,7 +640,13 @@ def main(argv=None) -> int:
         app = build_http_app(allowed_hosts, tok.TokenProvider())
         import uvicorn
 
-        uvicorn.run(app, host=args.host, port=args.port)
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            proxy_headers=True,
+            forwarded_allow_ips="127.0.0.1",
+        )
         return 0
 
     server = create_server(allowed_hosts=allowed_hosts)

@@ -63,6 +63,9 @@ Same as tailnet but `tailscale funnel` exposes it publicly. First-time use
 needs Funnel enabled once in the Tailscale admin console (the CLI prints the
 `login.tailscale.com/f/funnel?node=…` link). **This is PUBLIC on the
 internet, protected only by the bearer token** — the banner says so too.
+Funnel hostnames show up in public certificate-transparency logs, so
+internet scanners find the URL within minutes; that's expected — the token
+blocks them and per-IP throttling bans repeat offenders.
 Ctrl+C stops exposure.
 
 Note: cloud sessions use MCP connections configured in the Devin web app;
@@ -86,8 +89,13 @@ windesktopctl token --rotate     # new token; live-reloads, no restart needed
 ```
 
 `serve`/`--http` re-check the token file on every request, so `--rotate`
-locks out old clients immediately. More than 10 failed auths in 60s -> HTTP
-429 for 60s (failures logged with client address + Host, never the token).
+locks out old clients immediately. Auth throttling is **per client IP**:
+more than 10 failed auths from one IP in 60s bans only that IP with 429
+(10 min, doubling per repeat offense up to 24h); other IPs — including one
+presenting the right token — are unaffected, so scanners can't lock you
+out. Failures are logged with client IP, path, method, User-Agent (truncated)
+and Host — never the token; the first successful auth per IP per 10 min is
+logged too, so you can see which client is yours.
 
 ## Safety / kill switch
 
@@ -190,7 +198,8 @@ available directly:
 The token comes from `WINDESKTOPCTL_TOKEN` env or
 `%LOCALAPPDATA%\windesktopctl\token` (auto-created, user-only ACL); see
 **Token management**. Every request must send `Authorization: Bearer
-<token>`; everything else gets `401`, and >10 failures in 60s gets `429`.
+<token>`; everything else gets `401`, and >10 failures in 60s from one IP
+gets that IP a `429` (other IPs unaffected — see **Token management**).
 Host headers are validated against DNS-rebinding rules: `127.0.0.1`,
 `localhost`, and the bind host are allowed with or without port; repeat
 `--allowed-host` for tunnel hostnames. The MCP endpoint is
