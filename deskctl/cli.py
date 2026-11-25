@@ -84,6 +84,33 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("launch", help="launch a URL, file path, or command")
     s.add_argument("target")
 
+    s = sub.add_parser(
+        "browser", help="browser info|tabs|tab|text|navigate for Chromium windows"
+    )
+    s.add_argument("action", choices=["info", "tabs", "tab", "text", "navigate"])
+    s.add_argument("value", nargs="?", default=None,
+                   help="tab index/title, page text limit n/a, or URL for navigate")
+    s.add_argument("--window", default="focused")
+    s.add_argument("--max-chars", type=int, default=4000)
+
+    s = sub.add_parser(
+        "challenge",
+        help="capture a human-verify challenge with a labeled grid (never solved by deskctl)",
+    )
+    s.add_argument("--window", default="focused")
+    s.add_argument("--rows", type=int, default=None)
+    s.add_argument("--cols", type=int, default=None)
+
+    s = sub.add_parser(
+        "challenge-answer",
+        help="relay the user's exact answer to the active challenge (cells like 'B3 C4', --text, --enter)",
+    )
+    s.add_argument("id", type=int)
+    s.add_argument("--cells", default=None, help='grid cells, e.g. "B3 C4" or "b3,c4"')
+    s.add_argument("--text", default=None, help="characters to type into the input box")
+    s.add_argument("--no-submit", action="store_true", help="skip the verify/submit click")
+    s.add_argument("--enter", action="store_true", help="press Enter after typing")
+
     s = sub.add_parser("wait", help="wait for a condition (changed|text|window|element|gone)")
     s.add_argument("--for", dest="cond", default="changed",
                    choices=["changed", "text", "window", "element", "gone"])
@@ -134,6 +161,22 @@ def _dispatch(args) -> str:
                     args.width, args.height)
     if cmd == "launch":
         return _run(api.launch, args.target)
+    if cmd == "browser":
+        # value is positional; for text, --max-chars applies instead
+        val = args.value if args.action in ("tab", "navigate") else None
+        return _run(api.browser, args.action, val, args.window, args.max_chars)
+    if cmd == "challenge":
+        _data, info = _run(api.challenge, args.window, args.rows, args.cols)
+        return info
+    if cmd == "challenge-answer":
+        return _run(
+            api.challenge_answer,
+            args.id,
+            args.cells,
+            args.text,
+            not args.no_submit,
+            args.enter,
+        )
     if cmd == "wait":
         return _run(api.wait_for, args.cond, args.value, args.timeout, args.window)
     if cmd == "pause":

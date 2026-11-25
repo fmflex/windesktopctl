@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>deskctl-test-challenge-checkbox</title>
+<style>
+  body { font-family: Arial, sans-serif; background:#f4f6f8; margin:0; }
+  #challenge { max-width: 480px; margin: 100px auto; background:#fff;
+               border:1px solid #ccc; border-radius:8px; padding:28px;
+               box-shadow:0 2px 8px rgba(0,0,0,.08); }
+  h1 { font-size:20px; margin:0 0 14px; }
+  #box { display:flex; align-items:center; gap:16px; font-size:22px;
+         cursor:pointer; padding:14px 18px; border:1px solid #bbb;
+         border-radius:8px; background:#fafafa; }
+  #cb { width:40px; height:40px; cursor:pointer; }
+  #result { margin-top:14px; font-weight:bold; min-height:1.2em; }
+</style>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const tok = (location.hash || '#x').slice(1) || 'x';
+    document.title = 'deskctl-test-challenge-checkbox-' + tok;
+    document.getElementById('cb').addEventListener('change', (e) => {
+      if (e.target.checked) {
+        document.getElementById('result').textContent = 'PASSED';
+        document.getElementById('result').style.color = 'green';
+        document.title += '-passed';
+        document.getElementById('challenge').style.display = 'none';
+      }
+    });
+  });
+</script>
+</head>
+<body>
+<div id="challenge">
+  <h1>Verify you are human</h1>
+  <label id="box">
+    <input id="cb" type="checkbox">
+    <span>I&#39;m not a robot</span>
+  </label>
+  <div id="result"></div>
+</div>
+</body>
+</html>

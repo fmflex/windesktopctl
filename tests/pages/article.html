@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>deskctl-test-article</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 720px; margin: 2em auto; color: #222; }
+  h1 { font-size: 2em; } h2 { font-size: 1.4em; margin-top: 1.6em; }
+  p { line-height: 1.5; }
+  a { color: #0645ad; }
+  .spacer { height: 1400px; }
+</style>
+<script>
+  // Unique title token from the URL hash so live tests can guard on it.
+  document.addEventListener('DOMContentLoaded', () => {
+    const tok = (location.hash || '#x').slice(1) || 'x';
+    document.title = 'deskctl-test-article-' + tok;
+  });
+</script>
+</head>
+<body>
+<h1>Deskctl Test Article</h1>
+<p>This is a local test page for the deskctl browser helpers. It contains
+ordinary article text, headings, and links - nothing interactive beyond
+navigation. It exists so <code>browser text</code> can be checked for
+headings, links, dedup, and offscreen content without touching the network.</p>
+<h2>Section One: Basics</h2>
+<p>The quick brown fox jumps over the lazy dog. Pack my box with five dozen
+liquor jugs. How vexingly quick daft zebras jump!</p>
+<p>See also <a href="#s2">Section Two</a> and the
+<a href="https://example.com/">example domain</a> (not fetched - file:// page).</p>
+<h2 id="s2">Section Two: Details</h2>
+<p>Sphinx of black quartz, judge my vow. The five boxing wizards jump quickly.
+Bright vixens jump; dozy fowl quack.</p>
+<ul>
+  <li>First ordinary list item about testing.</li>
+  <li>Second ordinary list item, also unremarkable.</li>
+  <li>Third item - still nothing a challenge detector should like.</li>
+</ul>
+<p>The word robot appears here in plain prose: a robot is a machine. This line
+must NOT trigger challenge detection because it lacks every challenge phrase.</p>
+<div class="spacer"></div>
+<h2>Section Three: Below the Fold</h2>
+<p>This heading and paragraph are far below the initial viewport. They exist
+to prove that <code>browser text</code> returns offscreen content in document
+order without any scrolling.</p>
+<p>Final line of the article - a sentinel for truncation checks.</p>
+</body>
+</html>

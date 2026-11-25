@@ -29,8 +29,10 @@ async def main() -> int:
             names = [t.name for t in tools.tools]
             print("tools:", names)
             expected = {"observe", "screenshot", "act", "windows", "focus",
-                        "wait_for", "window", "launch", "pause", "resume",
-                        "status"}
+                        "wait_for", "window", "launch", "browser", "challenge",
+                        "challenge_answer", "pause", "resume", "status"}
+            if len(names) != len(expected):
+                print(f"note: {len(names)} tools registered (expected {len(expected)})")
             missing = expected - set(names)
             if missing:
                 print("MISSING TOOLS:", missing)

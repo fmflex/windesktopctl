@@ -19,7 +19,8 @@ def test_all_tools_by_default(monkeypatch):
     names = _tool_names(create_server())
     assert names == {
         "observe", "screenshot", "act", "windows", "focus", "wait_for",
-        "window", "launch", "pause", "resume", "status",
+        "window", "launch", "browser", "challenge", "challenge_answer",
+        "pause", "resume", "status",
     }
 
 

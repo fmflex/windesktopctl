@@ -222,3 +222,68 @@ def resolve_target(spec: str) -> tuple[int, int, str]:
     raise DeskctlError(
         f'unrecognized target "{spec}" (use element id "12", screen coords "x,y", or image coords "i:x,y")'
     )
+
+
+# -------------------------------------------------------------- challenge --
+
+CHALLENGE_MAX_AGE = 600.0  # seconds; challenge state older than this is stale
+
+
+def _finish(st: dict, ch: dict) -> dict:
+    ch = dict(ch)
+    ch["ts"] = time.time()
+    st["challenge"] = ch
+    save(st)
+    return st["challenge"]
+
+
+def set_challenge(ch: dict) -> dict:
+    """Record a detected challenge. Keeps the existing id when the same
+    window still has a fresh challenge (detection runs on every observe);
+    otherwise allocates a new id."""
+    st = load()
+    old = st.get("challenge")
+    if (
+        old
+        and int(old.get("hwnd") or 0) == int(ch.get("hwnd") or 0)
+        and time.time() - float(old.get("ts", 0)) <= CHALLENGE_MAX_AGE
+    ):
+        ch = dict(ch)
+        ch["id"] = int(old["id"])
+        return _finish(st, ch)
+    seq = int(st.get("challenge_seq", 0)) + 1
+    st["challenge_seq"] = seq
+    ch = dict(ch)
+    ch["id"] = seq
+    return _finish(st, ch)
+
+
+def record_challenge(ch: dict) -> dict:
+    """Record a challenge() capture - always a fresh id (new grid/image)."""
+    st = load()
+    seq = int(st.get("challenge_seq", 0)) + 1
+    st["challenge_seq"] = seq
+    ch = dict(ch)
+    ch["id"] = seq
+    return _finish(st, ch)
+
+
+def get_challenge() -> dict | None:
+    return load().get("challenge")
+
+
+def active_challenge() -> dict | None:
+    """The challenge state if present and younger than CHALLENGE_MAX_AGE."""
+    ch = get_challenge()
+    if not ch:
+        return None
+    if time.time() - float(ch.get("ts", 0)) > CHALLENGE_MAX_AGE:
+        return None
+    return ch
+
+
+def clear_challenge() -> None:
+    st = load()
+    if "challenge" in st:
+        del st["challenge"]
+        save(st)

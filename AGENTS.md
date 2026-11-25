@@ -13,8 +13,12 @@ run on a single COM-initialized worker thread (`deskctl.core.worker`).
   SendInput, hwheel), windows (list/focus + min/max/restore/close/move/resize),
   diff, privacy (DESKCTL_EXCLUDE + capture blackouts), safety
   (pause/failsafe/hotkey/LL-hook takeover), api (high-level ops).
-- `deskctl/mcp_server.py` — 11 FastMCP tools + `--http` Bearer-auth +
+- `deskctl/mcp_server.py` — 14 FastMCP tools + `--http` Bearer-auth +
   Host-header allowlist (`--allowed-host`); `DESKCTL_TOOLS` filters tools.
+- `deskctl/core/challenge.py` — pure logic for the human-challenge relay:
+  `detect_challenge`, grid overlay, cell parsing, webhook multipart body.
+  deskctl NEVER solves challenges; `challenge_answer` is the only input
+  path while one is active (act/window/browser tab|navigate are gated).
 - `deskctl/cli.py` — argparse CLI (`--json` global), exit 1 on error.
 - `tests/` — pytest unit tests (pure logic) + live/manual check scripts.
 - `THIRD_PARTY_NOTICES.md` — Windows-MCP MIT notice (v2 design borrow).

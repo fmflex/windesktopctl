@@ -63,20 +63,54 @@ deskctl launch "https://example.com"
 deskctl wait --for text --value "Save" --timeout 10
 deskctl wait --for element --value "Button:OK"
 deskctl wait --for changed --timeout 5
+deskctl browser info chrome               # title, URL, tabs for a browser window
+deskctl browser tabs chrome
+deskctl browser tab 2 chrome              # or a title substring
+deskctl browser text chrome --max-chars 4000   # whole page incl. offscreen
+deskctl browser navigate "https://example.com" chrome
+deskctl challenge chrome                  # grid-overlay PNG for a human check
+deskctl challenge-answer 3 --cells "B3 C4"      # relay the user's exact reply
+deskctl challenge-answer 3 --text "K7Q2-X9" --enter
 deskctl pause / deskctl resume / deskctl status
 deskctl guard                         # foreground hotkey + takeover guard (CLI-only)
 ```
 
-## MCP tools (11)
+## MCP tools (14)
 
 `observe` (+`dom`), `screenshot` (returns image + info), `act` (+`horizontal`),
-`windows`, `focus`, `wait_for`, `window`, `launch`, `pause`, `resume`,
-`status`. Tool docstrings carry the usage guidance (observe first, prefer
-element ids, `i:x,y` for image coords).
+`windows`, `focus`, `wait_for`, `window`, `launch`, `browser`, `challenge`,
+`challenge_answer`, `pause`, `resume`, `status`. Tool docstrings carry the
+usage guidance (observe first, prefer element ids, `i:x,y` for image coords).
 
 Element flags shown after name/value: `focused`, `disabled`, `checked`,
 `expanded`/`collapsed`, `selected`, `password`. Scrollable containers appear
 as role `Scroll` with `v=NN%` / `h=NN%`.
+
+## Human challenges (CAPTCHA relay)
+
+When `observe` on a browser window prints `!! challenge detected`, a
+"verify you are human"-style page is on screen. deskctl **never solves or
+guesses challenges** — no OCR-to-answer, no auto-clicking checkboxes, no
+evasion. It only relays:
+
+1. `challenge()` re-detects and returns a PNG of the challenge area with a
+   labeled grid overlay (rows A.., cols 1.., ~70px cells), saved to
+   `%LOCALAPPDATA%\deskctl\challenge_<id>.png`.
+2. Show that image to the user, wait for their reply, and pass it **verbatim**
+   to `challenge_answer(id, cells=..., text=...)` — e.g. cells `"B3 C4"` for
+   image grids, `text` for character challenges (with `enter=True` to press
+   Enter). It clicks/types exactly what you give it, then a verify/submit
+   button when present, and reports whether the challenge cleared.
+3. While a challenge is active (<10 min), `act`, `window`, and
+   `browser tab|navigate` **refuse** on that window — `challenge_answer` is
+   the only input path.
+
+Honesty note: deskctl cannot verify that an answer really came from the
+user — this is an agent-instruction contract enforced by the gating above.
+If you want per-answer human approval, set a Devin permission "ask" rule on
+the `challenge_answer` tool. `DESKCTL_NOTIFY_WEBHOOK` (a Discord webhook
+URL) optionally POSTs the challenge PNG so a human gets pinged; the URL is
+never logged.
 
 ## HTTP mode + token
 
@@ -126,6 +160,7 @@ screen/region captures before OCR/encoding. Built-in list: `1password.exe`,
 | `DESKCTL_IDLE_SECONDS` | `3` | takeover idle window |
 | `DESKCTL_EXCLUDE` | built-ins | extra excluded process names (comma-sep) |
 | `DESKCTL_TOOLS` | all | comma-separated MCP tool allowlist |
+| `DESKCTL_NOTIFY_WEBHOOK` | — | optional Discord webhook for challenge PNGs |
 | `DESKCTL_HOME` | `%LOCALAPPDATA%\deskctl` | state dir override |
 
 ## Tests

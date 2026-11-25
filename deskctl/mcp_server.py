@@ -61,6 +61,18 @@ Workflow:
 - windows() lists top-level windows; focus() raises one; window() does
   minimize/maximize/restore/close/move/resize; launch() opens a URL, file,
   or command and reports the new window.
+- browser() drives Chromium windows: info (title+URL+tabs), tabs, tab
+  (select by index/title), text (whole page incl. offscreen, no scrolling),
+  navigate (URL).
+- HUMAN CHALLENGES (CAPTCHA / "verify you are human"): deskctl NEVER solves
+  or guesses them - it cannot verify an answer really came from the user;
+  that is an agent-instruction contract. When observe() prints "!! challenge
+  detected", STOP acting on that page: call challenge(), show the returned
+  image to the user, wait for their reply, and pass it VERBATIM to
+  challenge_answer() (cells like "B3 C4", text, or both). act()/window()/
+  browser tab|navigate refuse on challenge pages until it clears; only
+  challenge_answer() may input there. If you want per-answer human approval,
+  set a Devin permission "ask" rule on challenge_answer.
 - Safety: pause() / resume() / status(); hotkey Ctrl+Alt+Shift+K toggles
   pause; slamming the cursor into the top-left screen corner failsafes;
   physical keyboard/mouse input pauses automation briefly (takeover
@@ -260,6 +272,70 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         except DeskctlError as e:
             return _err(e)
 
+    async def browser(
+        action: str,
+        value: str | None = None,
+        window: str = "focused",
+        max_chars: int = 4000,
+    ) -> str:
+        """Browser helpers for Chromium windows (firefox best-effort).
+        action: info | tabs | tab | text | navigate. info returns title,
+        current URL (omnibox value) and the tab list ('[tN] "Title"
+        selected'); tabs returns just the tab list; tab selects a tab -
+        value is 't2'/'2' or a title substring (exact > unique > error);
+        text returns readable page text from the WHOLE page including
+        offscreen content (headings '# ', links '[...]', dupes collapsed,
+        truncated at max_chars) - no scrolling needed; navigate takes a
+        URL, focuses the window, ctrl+l, types it, presses enter, waits for
+        the change and returns fresh info. tab/navigate are gated like act()."""
+        try:
+            return await _acall(api.browser, action, value, window, max_chars)
+        except DeskctlError as e:
+            return _err(e)
+
+    async def challenge(
+        window: str = "focused",
+        rows: int | None = None,
+        cols: int | None = None,
+    ):
+        """Capture a human-verification challenge (CAPTCHA / 'verify you are
+        human') as an image with a labeled grid overlay (rows A.., cols 1..,
+        ~70px cells; rows/cols override). Re-detects on a fresh observe; if
+        nothing is detected it still captures the content area (kind=unknown)
+        because the user may have asked for it. Returns the PNG plus an info
+        line with the challenge id. YOU MUST: show this image to the user,
+        wait for their reply, and pass it verbatim to challenge_answer().
+        deskctl NEVER solves challenges itself."""
+        from mcp.server.fastmcp import Image
+
+        try:
+            data, info = await _acall(api.challenge, window, rows, cols)
+        except DeskctlError as e:
+            return _err(e)
+        return [Image(data=data, format="png"), info]
+
+    async def challenge_answer(
+        id: int,
+        cells: str | None = None,
+        text: str | None = None,
+        submit: bool = True,
+        enter: bool = False,
+    ) -> str:
+        """Relay the user's EXACT answer to the active challenge - the ONLY
+        input path allowed on challenge pages (act/window/browser tab|
+        navigate refuse until it clears). id must match the last challenge()
+        call. cells: grid cells to click in order, e.g. "B3 C4" or "b3,c4"
+        (with text, the FIRST cell is the input box); text: characters to
+        type (into the first cell, or the Edit inside the challenge area
+        when no cells are given); submit clicks a verify/next/submit button
+        when present; enter presses Enter after typing. The answer text is
+        never logged. Pass the user's reply VERBATIM - never answer
+        challenges yourself."""
+        try:
+            return await _acall(api.challenge_answer, id, cells, text, submit, enter)
+        except DeskctlError as e:
+            return _err(e)
+
     async def pause() -> str:
         """Pause all deskctl actions (also toggled by Ctrl+Alt+Shift+K)."""
         try:
@@ -291,6 +367,9 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         "wait_for": wait_for,
         "window": window,
         "launch": launch,
+        "browser": browser,
+        "challenge": challenge,
+        "challenge_answer": challenge_answer,
         "pause": pause,
         "resume": resume,
         "status": status,

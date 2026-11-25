@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>deskctl-test-challenge-grid</title>
+<style>
+  body { font-family: Arial, sans-serif; background:#f4f6f8; margin:0; }
+  #challenge { max-width: 640px; margin: 60px auto; background:#fff;
+               border:1px solid #ccc; border-radius:8px; padding:24px;
+               box-shadow:0 2px 8px rgba(0,0,0,.08); }
+  h1 { font-size:20px; margin:0 0 8px; }
+  #instr { color:#444; margin-bottom:16px; }
+  #grid { display:grid; grid-template-columns:repeat(4,110px);
+          grid-auto-rows:110px; gap:8px; }
+  .tile { border:1px solid #999; border-radius:6px; font-size:34px;
+          display:flex; align-items:center; justify-content:center;
+          cursor:pointer; background:#eef1f4; user-select:none; }
+  .tile.sel { outline:3px solid #2255ff; background:#dbe7ff; }
+  #status { margin-top:14px; font-family:monospace; color:#2255ff; min-height:1.2em; }
+  #verify { margin-top:14px; padding:8px 18px; font-size:15px; cursor:pointer; }
+  #result { margin-top:10px; font-weight:bold; }
+</style>
+<script>
+  const ANSWER = [2, 7, 13];           // 0-based tile indices = "traffic lights"
+  const GLYPHS = ["⬜","🔵","🟣","⬛","🟠","🩷","🟩","🟦","🟪","🔶","⭐","💠",
+                  "🔲","🔳","◼️","🔷"];
+  const EMOJI = {}; GLYPHS.forEach((g,i)=>EMOJI[i]=g);
+  let selected = new Set();
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const tok = (location.hash || '#x').slice(1) || 'x';
+    document.title = 'deskctl-test-challenge-grid-' + tok;
+
+    const grid = document.getElementById('grid');
+    const status = document.getElementById('status');
+    for (let i = 0; i < 16; i++) {
+      const b = document.createElement('button');
+      b.className = 'tile'; b.type = 'button';
+      b.dataset.idx = i;
+      // Traffic-light tiles get the vertical-light emoji; others get glyphs.
+      b.textContent = ANSWER.includes(i) ? '🚥' : EMOJI[i];
+      b.setAttribute('aria-label', 'tile ' + i);
+      b.addEventListener('click', () => {
+        if (selected.has(i)) selected.delete(i); else selected.add(i);
+        b.classList.toggle('sel', selected.has(i));
+        status.textContent = 'selected: ' + [...selected].sort((a,b)=>a-b).join(',');
+      });
+      grid.appendChild(b);
+    }
+
+    document.getElementById('verify').addEventListener('click', () => {
+      const ok = selected.size === ANSWER.length &&
+                 ANSWER.every(i => selected.has(i));
+      const res = document.getElementById('result');
+      if (ok) {
+        res.textContent = 'PASSED';
+        res.style.color = 'green';
+        document.title += '-passed';
+        document.getElementById('challenge').style.display = 'none';
+        status.textContent = 'selected: ' + [...selected].sort((a,b)=>a-b).join(',') + ' - PASSED';
+      } else {
+        res.textContent = 'wrong selection, try again';
+        res.style.color = 'red';
+      }
+    });
+  });
+</script>
+</head>
+<body>
+<div id="challenge">
+  <h1>Verify you are human</h1>
+  <div id="instr">Select all squares with traffic lights</div>
+  <div id="grid"></div>
+  <div id="status">selected:</div>
+  <button id="verify" type="button">Verify</button>
+  <div id="result"></div>
+</div>
+</body>
+</html>

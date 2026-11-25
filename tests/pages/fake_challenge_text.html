@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>deskctl-test-challenge-text</title>
+<style>
+  body { font-family: Arial, sans-serif; background:#f4f6f8; margin:0; }
+  #challenge { max-width: 520px; margin: 80px auto; background:#fff;
+               border:1px solid #ccc; border-radius:8px; padding:28px;
+               box-shadow:0 2px 8px rgba(0,0,0,.08); text-align:center; }
+  h1 { font-size:20px; margin:0 0 8px; }
+  #instr { color:#444; margin-bottom:18px; }
+  #chars { font-size:34px; font-weight:bold; letter-spacing:6px;
+           font-family:'Courier New',monospace; background:#f0f0f0;
+           border-radius:6px; padding:12px; margin-bottom:18px;
+           user-select:none; }
+  #answer { font-size:18px; padding:8px; width:70%; letter-spacing:2px;
+            text-transform:uppercase; }
+  #submit { margin-left:8px; padding:9px 20px; font-size:15px; cursor:pointer; }
+  #result { margin-top:12px; font-weight:bold; min-height:1.2em; }
+</style>
+<script>
+  const SECRET = 'K7Q2-X9';   // what the user must type, exactly
+  document.addEventListener('DOMContentLoaded', () => {
+    const tok = (location.hash || '#x').slice(1) || 'x';
+    document.title = 'deskctl-test-challenge-text-' + tok;
+    document.getElementById('chars').textContent = SECRET;
+
+    document.getElementById('submit').addEventListener('click', () => {
+      const v = document.getElementById('answer').value.trim();
+      const res = document.getElementById('result');
+      if (v === SECRET) {
+        res.textContent = 'PASSED'; res.style.color = 'green';
+        document.title += '-passed';
+        document.getElementById('challenge').style.display = 'none';
+      } else {
+        res.textContent = 'wrong text, try again'; res.style.color = 'red';
+      }
+    });
+  });
+</script>
+</head>
+<body>
+<div id="challenge">
+  <h1>Verify you are human</h1>
+  <div id="instr">Type the characters you see</div>
+  <div id="chars"></div>
+  <input id="answer" type="text" autocomplete="off" spellcheck="false"
+         aria-label="answer">
+  <button id="submit" type="button">Submit</button>
+  <div id="result"></div>
+</div>
+</body>
+</html>

@@ -533,3 +533,171 @@ def walk(
             raise DeskctlError(f"cached UIA failed: {ex}") from ex
         # auto mode: fall back to the walker
         return _walk_tree(hwnd, window_rect, dom=dom)
+
+
+# ------------------------------------------------------- browser helpers --
+
+_DOM_TEXT_PROP_NAMES = (
+    "NameProperty",
+    "ControlTypeProperty",
+    "LocalizedControlTypeProperty",
+    "AriaRoleProperty",
+    "ValueValueProperty",
+    "IsPasswordProperty",
+)
+
+
+def dom_text_records(hwnd: int) -> list[dict]:
+    """Every descendant of the DOM root (RootWebArea/Document) in document
+    order, INCLUDING offscreen elements - feeds `browser text`.
+
+    Records: {"role", "name", "value", "localized", "aria"}. Password
+    values are never read. No rect/offscreen filtering: the point is to
+    read the whole page without scrolling.
+    """
+    import uiautomation as auto
+
+    _silence_uiautomation(auto)
+    core, uia = _core_uia()
+    P = auto.PropertyId
+    ct_names = _ct_names(core)
+
+    root = uia.ElementFromHandle(int(hwnd))
+    if root is None:
+        raise DeskctlError(f"UIA: cannot get element for hwnd {hwnd}")
+    scope_root = _dom_root_element(uia, core, root)
+    if scope_root is None:
+        raise DeskctlError("dom mode: web content (RootWebArea/Document) not found")
+
+    req = uia.CreateCacheRequest()
+    for pname in _DOM_TEXT_PROP_NAMES:
+        req.AddProperty(getattr(P, pname))
+    req.TreeScope = core.TreeScope_Element
+
+    try:
+        condition = uia.RawViewCondition
+    except Exception:
+        condition = uia.CreateTrueCondition()
+    arr = scope_root.FindAllBuildCache(core.TreeScope_Descendants, condition, req)
+    total = int(arr.Length)
+
+    records: list[dict] = []
+    for i in range(min(total, MAX_CACHED)):
+        try:
+            e = arr.GetElement(i)
+        except Exception:
+            continue
+        try:
+            ct = e.GetCachedPropertyValue(P.ControlTypeProperty)
+            role = ct_names.get(int(ct), "")
+            name = e.GetCachedPropertyValue(P.NameProperty) or ""
+            try:
+                localized = e.GetCachedPropertyValue(P.LocalizedControlTypeProperty) or ""
+            except Exception:
+                localized = ""
+            try:
+                aria = e.GetCachedPropertyValue(P.AriaRoleProperty) or ""
+            except Exception:
+                aria = ""
+            is_pw = bool(e.GetCachedPropertyValue(P.IsPasswordProperty))
+            value = ""
+            if not is_pw:
+                try:
+                    value = e.GetCachedPropertyValue(P.ValueValueProperty) or ""
+                except Exception:
+                    value = ""
+            records.append(
+                {
+                    "role": role,
+                    "name": name,
+                    "value": value,
+                    "localized": localized,
+                    "aria": aria,
+                }
+            )
+        except Exception:
+            continue
+    return records
+
+
+def dom_root_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Bounding rect of the DOM root (RootWebArea/Document), or None."""
+    core, uia = _core_uia()
+    root = uia.ElementFromHandle(int(hwnd))
+    if root is None:
+        return None
+    el = _dom_root_element(uia, core, root)
+    if el is None:
+        return None
+    try:
+        br = el.CurrentBoundingRectangle
+        x, y = int(br.left), int(br.top)
+        w, h = int(br.right - br.left), int(br.bottom - br.top)
+        if w <= 0 or h <= 0:
+            return None
+        return (x, y, w, h)
+    except Exception:
+        return None
+
+
+TAB_STRIP_DEPTH = 140  # px below window top that counts as the tab strip
+
+
+def tab_controls(hwnd: int, window_rect: tuple[int, int, int, int]) -> list[dict]:
+    """TabItem controls in the browser tab strip, in document order.
+
+    Returns [{"name", "rect", "selected", "control"}] - ``control`` is the
+    live uiautomation Control so callers can try SelectionItemPattern.Select
+    or fall back to clicking its center. Tab strip = TabItems whose top
+    edge sits within TAB_STRIP_DEPTH px of the window top (in-page tab
+    lists sit lower and are ignored).
+    """
+    import uiautomation as auto
+
+    _silence_uiautomation(auto)
+    root = auto.ControlFromHandle(int(hwnd))
+    if root is None:
+        raise DeskctlError(f"UIA: cannot get control for hwnd {hwnd}")
+
+    strip_bottom = window_rect[1] + TAB_STRIP_DEPTH
+    out: list[dict] = []
+    visited = 0
+    deadline = time.monotonic() + TIME_BUDGET
+    queue: deque = deque([(root, 0)])
+    while queue:
+        if (visited & 31) == 0 and time.monotonic() > deadline:
+            break
+        if visited >= MAX_VISITED:
+            break
+        ctrl, depth = queue.popleft()
+        visited += 1
+        try:
+            is_tab = ctrl.ControlTypeName == "TabItemControl"
+        except Exception:
+            is_tab = False
+        if is_tab:
+            r = _rect_of(ctrl)
+            if r is not None and r[2] > 0 and r[3] > 0 and r[1] < strip_bottom:
+                selected = False
+                try:
+                    sp = ctrl.GetPattern(10010)  # UIA_SelectionItemPatternId
+                    if sp is not None and sp.IsSelected:
+                        selected = True
+                except Exception:
+                    pass
+                out.append(
+                    {
+                        "name": _name_of(ctrl),
+                        "rect": r,
+                        "selected": selected,
+                        "control": ctrl,
+                    }
+                )
+        if depth < MAX_DEPTH:
+            try:
+                children = ctrl.GetChildren()
+            except Exception:
+                children = []
+            for child in children or []:
+                queue.append((child, depth + 1))
+    return out
