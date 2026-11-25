@@ -278,18 +278,18 @@ def test_auth_ok_logged_once_per_10min(capsys):
     mw = BearerAuthMiddleware(_ok_app, "tok", clock=clk)
 
     async def go():
-        await _status(mw, _scope(ip="4.4.4.4", ua="Devin/1.0"))
-        await _status(mw, _scope(ip="4.4.4.4", ua="Devin/1.0"))
+        await _status(mw, _scope(ip="4.4.4.4", ua="AgentClient/1.0"))
+        await _status(mw, _scope(ip="4.4.4.4", ua="AgentClient/1.0"))
 
     _run(go())
     err = capsys.readouterr().err
     assert err.count("auth ok from 4.4.4.4") == 1
-    assert "Devin/1.0" in err
+    assert "AgentClient/1.0" in err
 
     clk.advance(601)
 
     async def go2():
-        await _status(mw, _scope(ip="4.4.4.4", ua="Devin/1.0"))
+        await _status(mw, _scope(ip="4.4.4.4", ua="AgentClient/1.0"))
 
     _run(go2())
     err = capsys.readouterr().err

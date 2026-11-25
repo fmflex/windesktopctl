@@ -10,7 +10,9 @@ Run:
 
     .venv\\Scripts\\python tests\\live_ida_check.py --i64 <copy.i64>
 
-The copy is deleted at the end unless --keep-copy is passed.
+The copy is deleted at the end unless --keep-copy is passed. The idalib
+worker needs a Python with ida_pro_mcp + idapro installed - set
+WINDESKTOPCTL_IDA_PYTHON to it (defaults to this interpreter).
 """
 
 import argparse
@@ -34,7 +36,7 @@ EXE = ROOT / ".venv" / "Scripts" / "windesktopctl.exe"
 SRV_PORT = 8797
 IDALIB_PORT = 18745
 IDA_GUI_PORT = 13337
-PY314 = r"C:\Users\funkm\AppData\Local\Python\pythoncore-3.14-64\python.exe"
+IDA_PY = os.environ.get("WINDESKTOPCTL_IDA_PYTHON") or sys.executable
 LONG = timedelta(seconds=900)   # MCP read timeout for autostart waits
 
 PASS = []
@@ -65,7 +67,7 @@ def wait_port(port: int, timeout: float) -> bool:
 
 def write_config(home: Path, i64: Path) -> None:
     cmd = [
-        PY314, "-m", "ida_pro_mcp.idalib_server",
+        IDA_PY, "-m", "ida_pro_mcp.idalib_server",
         "--host", "127.0.0.1", "--port", str(IDALIB_PORT),
         str(i64),
     ]

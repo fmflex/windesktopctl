@@ -53,6 +53,8 @@ run on a single COM-initialized worker thread (`windesktopctl.core.worker`).
 .\.venv\Scripts\python tests\smoke_live.py       # live desktop smoke (manual)
 .\.venv\Scripts\python tests\mcp_stdio_check.py  # MCP stdio check (manual)
 .\.venv\Scripts\python tests\mcp_http_check.py   # MCP HTTP 401 check (manual)
+.\.venv\Scripts\python tests\live_shell_check.py # isolated HTTP shell/file check
+.\.venv\Scripts\python tests\live_ida_check.py   # idalib upstream check (--i64 copy)
 ```
 
 ## Conventions / gotchas

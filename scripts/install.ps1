@@ -1,5 +1,5 @@
 # windesktopctl installer - finds Python >=3.11, creates .venv, installs
-# editable, prints the `devin mcp add` command to register the stdio server.
+# editable, prints a generic stdio MCP client config snippet.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
@@ -33,7 +33,7 @@ if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
 $mcp = "$root\.venv\Scripts\windesktopctl-mcp.exe"
 Write-Host ""
-Write-Host "Done. Register the MCP server (stdio) with:"
-Write-Host "  devin mcp add -s user windesktopctl -- `"$mcp`""
+Write-Host "Done. Register the MCP server (stdio) in your MCP client config:"
+Write-Host "  { `"mcpServers`": { `"windesktopctl`": { `"command`": `"$($mcp -replace '\\','\\')`" } } }"
 Write-Host ""
 Write-Host "To serve over HTTP instead:  .\start.cmd -Expose tailnet   (see README)"

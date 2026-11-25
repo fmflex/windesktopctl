@@ -55,7 +55,7 @@ def test_http_strong_token_registers_new_tools():
 
 
 def test_stdio_registers_new_tools_without_token():
-    """stdio mode (local Devin) has no bearer token - new tools register;
+    """stdio mode (local client) has no bearer token - new tools register;
     config.toml + pause still gate every call."""
     names = _tool_names(create_server())
     assert _NEW_TOOLS <= names

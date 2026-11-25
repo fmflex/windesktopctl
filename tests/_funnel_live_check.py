@@ -6,7 +6,8 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
 from live_shell_check import call  # noqa: E402
 
 import os  # noqa: E402
@@ -39,16 +40,16 @@ async def main():
 
             print("\n== read_file README (first 5 lines) ==")
             print((await call(s, "read_file", {
-                "path": r"C:\Users\funkm\repo\windesktopctl\README.md",
+                "path": str(ROOT / "README.md"),
                 "offset": 1, "limit": 5}))[:800])
 
-            print("\n== list_dir POE2Stuff (first entries) ==")
+            print("\n== list_dir repo root (first entries) ==")
             out = await call(s, "list_dir", {
-                "path": r"C:\Users\funkm\repo\POE2Stuff", "max_entries": 12})
+                "path": str(ROOT), "max_entries": 12})
             print("\n".join(out.splitlines()[:14]))
 
             print("\n== scratch write/edit/delete ==")
-            sp = r"C:\Users\funkm\repo\windesktopctl\.scratch_test.txt"
+            sp = str(ROOT / ".scratch_test.txt")
             print(await call(s, "write_file", {"path": sp, "text": "scratch-one\nscratch-two\n"}))
             print(await call(s, "edit_file", {"path": sp, "old": "scratch-two", "new": "scratch-TWO"}))
             print(await call(s, "read_file", {"path": sp, "offset": 2, "limit": 1}))
