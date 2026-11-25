@@ -17,13 +17,19 @@ run on a single COM-initialized worker thread (`windesktopctl.core.worker`).
   ops), config (config.toml tomllib + mtime reload + --init template),
   files (root-confined read/write/edit/list/glob/grep/chunked transfer,
   realpath+junction-safe), shell (exec powershell/cmd + background jobs on
-  <state_dir>/jobs, head+tail capture, taskkill tree-kill).
-- `windesktopctl/mcp_server.py` — 27 FastMCP tools (14 desktop + 13
-  shell/file on a separate ThreadPoolExecutor) + `--http` Bearer-auth
-  (per-IP token provider + 429 throttle) + Host-header allowlist
-  (`--allowed-host`) + JSONL audit.log; shell/file tools only register in
-  HTTP mode when the token is strong (>=32 chars, >=16 distinct);
-  `WINDESKTOPCTL_TOOLS` filters tools. `build_http_app()` is shared.
+  <state_dir>/jobs, head+tail capture, taskkill tree-kill),
+  upstreams (MCP passthrough: one asyncio loop thread owns upstream
+  sessions; lazy/persistent/reconnect; [mcp_upstreams.*] config with
+  url|command, transport streamable-http|jsonrpc-http, deny/allow_unsafe,
+  headless start_command autostart + shutdown_tool/CTRL_BREAK/taskkill
+  stop; jsonrpc-http fallback client for zeromcp-style endpoints).
+- `windesktopctl/mcp_server.py` — 30 FastMCP tools (14 desktop + 13
+  shell/file + 3 mcp_* on a separate ThreadPoolExecutor) + `--http`
+  Bearer-auth (per-IP token provider + 429 throttle) + Host-header
+  allowlist (`--allowed-host`) + JSONL audit.log; shell/file/mcp tools
+  only register in HTTP mode when the token is strong (>=32 chars,
+  >=16 distinct); `WINDESKTOPCTL_TOOLS` filters tools.
+  `build_http_app()` is shared.
 - `windesktopctl/serve.py` — `windesktopctl serve` CLI backend: binds
   127.0.0.1, optional `tailscale serve|funnel --bg <port>` exposure with
   :443 pre-check and turn-off-only-what-we-enabled cleanup (never `reset`).

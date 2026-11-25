@@ -95,6 +95,15 @@ Workflow:
   chunk count), download_chunk/upload_chunk for big files in <=4MB base64
   chunks (upload is resumable via .part offsets). All refuse while paused
   or when disabled in config.toml.
+- MCP UPSTREAM TOOLS (config.toml [mcp_upstreams.*]): mcp_servers lists the
+  configured upstream MCP servers (reachable/connected/tools/managed pid);
+  mcp_tools(server, filter=...) shows an upstream's tools (denied tools are
+  hidden unless include_denied); mcp_call(server, tool, args) forwards one
+  call and returns text + structuredContent (+image/resource metadata).
+  Workflow: mcp_servers -> mcp_tools with a narrow filter -> mcp_call.
+  Upstreams named ida* deny py_eval/py_exec_file unless allow_unsafe;
+  'ida' needs the IDA GUI open with the database; 'ida_headless' starts
+  IDA headless on demand when the GUI isn't running.
 - Safety: pause() / resume() / status(); hotkey Ctrl+Alt+Shift+K toggles
   pause; slamming the cursor into the top-left screen corner failsafes;
   physical keyboard/mouse input pauses automation briefly (takeover
@@ -352,6 +361,9 @@ _NEW_TOOL_NAMES = {
     "file_info",
     "download_chunk",
     "upload_chunk",
+    "mcp_servers",
+    "mcp_tools",
+    "mcp_call",
 }
 
 _audit_lock = threading.Lock()
@@ -899,6 +911,99 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
             )
         return res
 
+    # --------------------------------------------- MCP upstream passthrough --
+
+    async def mcp_servers(
+        stop: str | None = None, ctx: Context | None = None
+    ) -> str:
+        """List the MCP upstream servers configured in config.toml
+        ([mcp_upstreams.*]): name, kind (http/stdio), enabled, reachable,
+        connected, cached tool count, managed headless pid/status, last
+        error, denied tools. stop=<name> gracefully stops that upstream's
+        managed headless process (CTRL_C/SIGINT -> clean DB close, up to
+        60s, then kill) - only for upstreams with start_command."""
+        from windesktopctl.core import safety as _safety
+        from windesktopctl.core import upstreams as ups
+
+        _safety.check_paused()
+        try:
+            if stop:
+                res = await _aiocall(ups.stop_server, stop)
+                _audit(ctx, "mcp_servers", server=str(stop), result=res[:200])
+                return res
+            return await _aiocall(ups.servers_status)
+        except WindesktopctlError as e:
+            return _err(e)
+
+    async def mcp_tools(
+        server: str,
+        filter: str | None = None,
+        include_denied: bool = False,
+        refresh: bool = False,
+        ctx: Context | None = None,
+    ) -> str:
+        """List an upstream MCP server's tools: name, description (<=300
+        chars), inputSchema. filter = case-insensitive substring on name or
+        description. Denied tools (unsafe/deny_tools, allow_unsafe=false)
+        are hidden unless include_denied=true (tagged [denied]). refresh=true
+        reconnects and re-lists. Output caps ~64KB - narrow the filter.
+        Refuses while paused or when the upstream is disabled."""
+        from windesktopctl.core import safety as _safety
+        from windesktopctl.core import upstreams as ups
+
+        _safety.check_paused()
+        try:
+            return await _aiocall(
+                ups.tools_list, server, filter, include_denied, refresh
+            )
+        except WindesktopctlError as e:
+            return _err(e)
+
+    async def mcp_call(
+        server: str,
+        tool: str,
+        args: dict | str | None = None,
+        timeout_s: int = 120,
+        ctx: Context | None = None,
+    ) -> str:
+        """Forward one tool call to an upstream MCP server and return the
+        result: text content, structuredContent as compact JSON, images as
+        metadata + a saved copy under <state_dir>/upstreams/, embedded
+        resources as text (or metadata if binary). isError results are
+        prefixed 'upstream error:'; JSON-RPC/transport errors pass through
+        verbatim. args is a JSON object (a JSON string is also accepted).
+        timeout_s clamped to 1..1800. Denied tools and disabled upstreams
+        are refused; a failed call marks the session for reconnect on the
+        NEXT call (the failed call itself is never re-sent)."""
+        from windesktopctl.core import safety as _safety
+        from windesktopctl.core import upstreams as ups
+
+        _safety.check_paused()
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                return "error: args must be a JSON object or JSON object string"
+        if args is not None and not isinstance(args, dict):
+            return "error: args must be a JSON object"
+        timeout_s = max(1, min(int(timeout_s), 1800))
+        try:
+            arg_bytes = len(json.dumps(args if args is not None else {}, default=str))
+        except Exception:
+            arg_bytes = -1
+        t0 = time.monotonic()
+        try:
+            text, meta = await _aiocall(
+                ups.call_tool, server, tool, args, timeout_s
+            )
+        except WindesktopctlError as e:
+            _audit(ctx, "mcp_call", server=str(server),
+                   upstream_tool=str(tool), arg_bytes=arg_bytes,
+                   is_error=True, duration_s=round(time.monotonic() - t0, 2))
+            return _err(e)
+        _audit(ctx, "mcp_call", **meta)
+        return text
+
     tool_fns = {
         "observe": observe,
         "screenshot": screenshot,
@@ -927,6 +1032,9 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         "file_info": file_info,
         "download_chunk": download_chunk,
         "upload_chunk": upload_chunk,
+        "mcp_servers": mcp_servers,
+        "mcp_tools": mcp_tools,
+        "mcp_call": mcp_call,
     }
 
     # HTTP mode requires a strong bearer token before shell/file tools are

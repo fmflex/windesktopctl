@@ -22,7 +22,7 @@ _BASE_TOOLS = {
 _NEW_TOOLS = {
     "exec", "job_output", "job_kill", "job_list", "read_file", "write_file",
     "edit_file", "list_dir", "glob", "grep", "file_info", "download_chunk",
-    "upload_chunk",
+    "upload_chunk", "mcp_servers", "mcp_tools", "mcp_call",
 }
 _WEAK_TOKEN = "a" * 16 + "b" * 16  # 32 chars but only 2 distinct -> weak
 _GOOD_TOKEN = "0123456789abcdef" * 2  # 32 chars, 16 distinct -> strong

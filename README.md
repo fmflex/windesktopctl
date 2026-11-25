@@ -18,7 +18,10 @@ Exposed two ways with the same operations:
 Optionally also exposes **shell + filesystem tools** (`exec`, background
 jobs, root-confined file read/write/edit/glob/grep/chunked upload+download)
 so cloud agents can run commands and edit repos on this PC without GUI
-automation — see **Shell & file tools** below.
+automation — see **Shell & file tools** below. And **MCP upstream
+passthrough** (`mcp_servers`/`mcp_tools`/`mcp_call`) forwards calls to other
+local MCP servers declared in `config.toml` — e.g. the IDA Pro plugin and a
+headless idalib worker — see **MCP upstreams** below.
 
 All coordinates are physical virtual-screen pixels. Element ids, the last
 screenshot mapping, and the diff baseline persist in
@@ -146,7 +149,7 @@ windesktopctl pause / windesktopctl resume / windesktopctl status
 windesktopctl guard                         # foreground hotkey + takeover guard (CLI-only)
 ```
 
-## MCP tools (27)
+## MCP tools (30)
 
 Desktop (14): `observe` (+`dom`), `screenshot` (returns image + info), `act`
 (+`horizontal`), `windows`, `focus`, `wait_for`, `window`, `launch`,
@@ -157,6 +160,8 @@ Tool docstrings carry the usage guidance (observe first, prefer element ids,
 Shell/file (13, see below): `exec`, `job_output`, `job_kill`, `job_list`,
 `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`,
 `file_info`, `download_chunk`, `upload_chunk`.
+
+MCP upstream (3, see below): `mcp_servers`, `mcp_tools`, `mcp_call`.
 
 Element flags shown after name/value: `focused`, `disabled`, `checked`,
 `expanded`/`collapsed`, `selected`, `password`. Scrollable containers appear
@@ -199,8 +204,9 @@ file_roots = [              # file tools may ONLY touch paths inside these
   (CRLF-aware); `grep` is regex with binary/oversize skipping; big files go
   through `download_chunk`/`upload_chunk` in ≤4 MB base64 chunks
   (upload is resumable via `.part` offsets, sha256-verified on `done`).
-- Writes under `C:\Program Files (x86)\...` (the game folder) may fail
-  without admin rights — that's expected; windesktopctl never elevates.
+- The game folder `C:\Program Files (x86)\Grinding Gear Games\Path of Exile 2`
+  is world-writable (`Everyone:(F)`) on this machine, so file-tool writes
+  there work without admin; windesktopctl never elevates either way.
 - These tools run on a **separate thread pool**, so a long exec can't
   block the GUI tools. In **HTTP mode they are only registered when the
   bearer token is strong** (≥32 chars, ≥16 distinct — the auto-generated
@@ -209,6 +215,69 @@ file_roots = [              # file tools may ONLY touch paths inside these
   `%LOCALAPPDATA%\windesktopctl\audit.log` (JSONL: timestamp, client IP,
   tool, command/path, result metadata — never file contents, env values,
   or the token).
+
+## MCP upstreams (config.toml)
+
+`[mcp_upstreams.<name>]` entries forward MCP calls to other **local** MCP
+servers, exposed as three tools (same gates as shell/file: strong token in
+HTTP mode, pause, IO pool, audit):
+
+- **`mcp_servers`** — lists each upstream: kind (http/stdio), enabled,
+  reachable, connected, cached tool count, managed-process pid, last
+  error. `mcp_servers(stop="<name>")` gracefully stops a managed headless
+  process.
+- **`mcp_tools(server, filter=, include_denied=, refresh=)`** — the
+  upstream's tools (name, ≤300-char description, compact inputSchema).
+  `filter` is a case-insensitive substring; denied tools are hidden unless
+  `include_denied=true` (tagged `[denied]`). Output caps ~64 KB.
+- **`mcp_call(server, tool, args=, timeout_s=)`** — one forwarded call.
+  `args` is a JSON object (a JSON string also works); `timeout_s` clamps to
+  1–1800. Text + `structuredContent` come back as compact JSON, images are
+  saved under `%LOCALAPPDATA%\windesktopctl\upstreams\` (metadata only in
+  the reply), embedded resources as text. `isError` results are prefixed
+  `upstream error:`; transport errors pass through verbatim and mark the
+  session for reconnect on the **next** call (a failed call is never
+  re-sent). Every call is audited (server, upstream tool, arg size,
+  is_error, duration — never the arguments).
+
+Workflow: `mcp_servers` → `mcp_tools` with a narrow `filter` → `mcp_call`.
+
+```toml
+[mcp_upstreams.ida]                  # IDA GUI plugin - needs IDA open with the DB
+url = "http://127.0.0.1:13337/mcp"
+enabled = true
+allow_unsafe = false                 # false denies py_eval/py_exec_file (ida*)
+transport = "jsonrpc-http"           # zeromcp: plain JSON-RPC, not SSE
+# headers = {}
+
+[mcp_upstreams.ida_headless]         # idalib headless, started on demand
+url = "http://127.0.0.1:8745/mcp"
+enabled = true
+allow_unsafe = false
+transport = "jsonrpc-http"
+start_command = ['C:\...\python.exe', '-m', 'ida_pro_mcp.idalib_server',
+  '--host', '127.0.0.1', '--port', '8745', 'C:\...\PathOfExile.exe.i64']
+start_if_unreachable = "ida"         # only autostart when the GUI isn't up
+start_timeout_s = 300
+shutdown_tool = "idb_open"           # graceful stop: re-arm idle TTL -> self-exit
+shutdown_args = { input_path = 'C:\...\PathOfExile.exe.i64', idle_ttl_sec = 10 }
+```
+
+- Upstreams are **lazy + persistent**: the first use connects (streamable
+  HTTP by default, `command = [...]` for stdio with optional `env`/`cwd`,
+  or `transport = "jsonrpc-http"` for plain JSON-RPC endpoints), sessions
+  are reused, and transport failures trigger teardown + reconnect on the
+  next use (connect-stage failures retry once).
+- `allow_unsafe = false` denies the built-in unsafe tools — `py_eval` and
+  `py_exec_file` for upstreams named `ida*`, plus anything in
+  `unsafe_tools`/`deny_tools` for any upstream.
+- `start_command` upstreams autostart when unreachable **and** their
+  `start_if_unreachable` target is also down (one IDA per database); the
+  process is tracked, logged to `%LOCALAPPDATA%\windesktopctl\upstreams\`,
+  and stopped via `shutdown_tool` when configured, else CTRL_BREAK, else
+  `taskkill /T /F` after a 60 s grace — never a hard kill first.
+- `mcp_servers` reachability is a 1 s TCP probe (or command lookup for
+  stdio); `connected` means a live cached session.
 
 ## Human challenges (CAPTCHA relay)
 
