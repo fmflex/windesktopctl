@@ -5,3 +5,9 @@ __pycache__/
 windesktopctl.egg-info/
 @AutomationLog.txt
 tests/answers.json
+
+# guard: PoE2 client must never write into the repo again
+Content.ggpk
+HashCache.dat
+/PathOfExile*.exe
+/logs/

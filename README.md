@@ -15,6 +15,11 @@ Exposed two ways with the same operations:
 - a **CLI** (`windesktopctl ...`, `--json` for structured output) so a remote agent
   that can only run shell commands can drive the desktop.
 
+Optionally also exposes **shell + filesystem tools** (`exec`, background
+jobs, root-confined file read/write/edit/glob/grep/chunked upload+download)
+so cloud agents can run commands and edit repos on this PC without GUI
+automation — see **Shell & file tools** below.
+
 All coordinates are physical virtual-screen pixels. Element ids, the last
 screenshot mapping, and the diff baseline persist in
 `%LOCALAPPDATA%\windesktopctl\state.json`, so ids are shared across CLI/MCP calls
@@ -135,21 +140,75 @@ windesktopctl challenge-answer 3 --cells "3 8 14"      # relay the user's exact 
 windesktopctl challenge-answer 3 --cells "B3 C4"       # lettered grids
 windesktopctl challenge-answer 3 --text "K7Q2-X9" --enter
 windesktopctl token [--show|--rotate]           # HTTP bearer token
+windesktopctl config [--init|--show]            # shell/file toggles + roots (config.toml)
 windesktopctl serve --expose tailnet --port 8765 --copy
 windesktopctl pause / windesktopctl resume / windesktopctl status
 windesktopctl guard                         # foreground hotkey + takeover guard (CLI-only)
 ```
 
-## MCP tools (14)
+## MCP tools (27)
 
-`observe` (+`dom`), `screenshot` (returns image + info), `act` (+`horizontal`),
-`windows`, `focus`, `wait_for`, `window`, `launch`, `browser`, `challenge`,
-`challenge_answer`, `pause`, `resume`, `status`. Tool docstrings carry the
-usage guidance (observe first, prefer element ids, `i:x,y` for image coords).
+Desktop (14): `observe` (+`dom`), `screenshot` (returns image + info), `act`
+(+`horizontal`), `windows`, `focus`, `wait_for`, `window`, `launch`,
+`browser`, `challenge`, `challenge_answer`, `pause`, `resume`, `status`.
+Tool docstrings carry the usage guidance (observe first, prefer element ids,
+`i:x,y` for image coords).
+
+Shell/file (13, see below): `exec`, `job_output`, `job_kill`, `job_list`,
+`read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`,
+`file_info`, `download_chunk`, `upload_chunk`.
 
 Element flags shown after name/value: `focused`, `disabled`, `checked`,
 `expanded`/`collapsed`, `selected`, `password`. Scrollable containers appear
 as role `Scroll` with `v=NN%` / `h=NN%`.
+
+## Shell & file tools (config.toml)
+
+For cloud agents and bots that need to **run commands and edit files** on
+this PC without GUI automation. All 13 tools refuse while paused and honor
+the `shell_enabled` / `file_tools_enabled` kill switches (re-read on every
+call — edit `config.toml` and it takes effect immediately, no restart).
+
+Config lives at `%LOCALAPPDATA%\windesktopctl\config.toml`
+(`windesktopctl config --init` writes a commented template):
+
+```toml
+shell_enabled = true        # exec + job_* tools
+file_tools_enabled = true   # read/write/edit/list/glob/grep/upload/download
+file_roots = [              # file tools may ONLY touch paths inside these
+  'C:\Users\funkm\repo\POE2Stuff',
+  'C:\Users\funkm\repo\windesktopctl',
+  'C:\Program Files (x86)\Grinding Gear Games\Path of Exile 2',
+  'C:\Users\funkm\AppData\Roaming\Hex-Rays\IDA Pro',
+]
+```
+
+- **`exec` is a FULL shell — it is NOT confined to `file_roots`.** The roots
+  only limit the file tools; exec can read/write anywhere the user account
+  can (cwd included). `shell="powershell"` (default) or `"cmd"`, optional
+  `env`, `cwd`, `timeout_s` (1–1800, kills the whole process tree on
+  timeout). No stdin — pass non-interactive flags.
+- **Background jobs**: `exec(background=true)` returns `job_id=jN`; output
+  streams to files, `job_output` returns only *new* bytes since your last
+  call, `job_kill` kills the tree, `job_list` lists jobs. Jobs are
+  in-memory only — a server restart forgets them.
+- **File tools** require absolute paths inside `file_roots` (junctions and
+  symlinks are resolved first — escapes are refused; UNC/device paths and
+  NTFS alternate streams are rejected outright). `read_file` gives numbered
+  lines or a base64 byte range; `edit_file` does exact-string replace
+  (CRLF-aware); `grep` is regex with binary/oversize skipping; big files go
+  through `download_chunk`/`upload_chunk` in ≤4 MB base64 chunks
+  (upload is resumable via `.part` offsets, sha256-verified on `done`).
+- Writes under `C:\Program Files (x86)\...` (the game folder) may fail
+  without admin rights — that's expected; windesktopctl never elevates.
+- These tools run on a **separate thread pool**, so a long exec can't
+  block the GUI tools. In **HTTP mode they are only registered when the
+  bearer token is strong** (≥32 chars, ≥16 distinct — the auto-generated
+  token passes); a weak token prints a warning and the tools stay absent.
+  In stdio mode they're always registered. Every call is appended to
+  `%LOCALAPPDATA%\windesktopctl\audit.log` (JSONL: timestamp, client IP,
+  tool, command/path, result metadata — never file contents, env values,
+  or the token).
 
 ## Human challenges (CAPTCHA relay)
 
@@ -209,7 +268,9 @@ Host headers are validated against DNS-rebinding rules: `127.0.0.1`,
 
 - `windesktopctl pause` / `windesktopctl resume` (or MCP `pause`/`resume`), or the global
   hotkey **Ctrl+Alt+Shift+K** (auto-started by `windesktopctl-mcp` and
-  `windesktopctl guard`).
+  `windesktopctl guard`). Pause also refuses the shell/file tools — it does
+  NOT gate them on physical-input takeover, since running commands doesn't
+  fight the user's mouse/keyboard.
 - **Failsafe:** moving the cursor into the top-left 2px corner of the virtual
   screen refuses the next action and pauses automation.
 - **User takeover:** physical keyboard/mouse input (detected via

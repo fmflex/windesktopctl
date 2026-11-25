@@ -12,10 +12,17 @@ run on a single COM-initialized worker thread (`windesktopctl.core.worker`).
   (JSON in %LOCALAPPDATA%\windesktopctl, WINDESKTOPCTL_HOME overrides), input (ctypes
   SendInput, hwheel), windows (list/focus + min/max/restore/close/move/resize),
   diff, privacy (WINDESKTOPCTL_EXCLUDE + capture blackouts), safety
-  (pause/failsafe/hotkey/LL-hook takeover), token (bearer token file/ACL/
-  rotate/live-reload provider), api (high-level ops).
-- `windesktopctl/mcp_server.py` — 14 FastMCP tools + `--http` Bearer-auth
-  (token provider + 429 throttle) + Host-header allowlist (`--allowed-host`);
+  (pause/failsafe/hotkey/LL-hook takeover + check_paused for shell/file),
+  token (bearer token file/ACL/rotate/live-reload provider), api (high-level
+  ops), config (config.toml tomllib + mtime reload + --init template),
+  files (root-confined read/write/edit/list/glob/grep/chunked transfer,
+  realpath+junction-safe), shell (exec powershell/cmd + background jobs on
+  <state_dir>/jobs, head+tail capture, taskkill tree-kill).
+- `windesktopctl/mcp_server.py` — 27 FastMCP tools (14 desktop + 13
+  shell/file on a separate ThreadPoolExecutor) + `--http` Bearer-auth
+  (per-IP token provider + 429 throttle) + Host-header allowlist
+  (`--allowed-host`) + JSONL audit.log; shell/file tools only register in
+  HTTP mode when the token is strong (>=32 chars, >=16 distinct);
   `WINDESKTOPCTL_TOOLS` filters tools. `build_http_app()` is shared.
 - `windesktopctl/serve.py` — `windesktopctl serve` CLI backend: binds
   127.0.0.1, optional `tailscale serve|funnel --bg <port>` exposure with
@@ -26,7 +33,7 @@ run on a single COM-initialized worker thread (`windesktopctl.core.worker`).
   windesktopctl NEVER solves challenges; `challenge_answer` is the only input
   path while one is active (act/window/browser tab|navigate are gated).
 - `windesktopctl/cli.py` — argparse CLI (`--json` global), exit 1 on error;
-  `token`, `serve`, `guard` subcommands.
+  `token`, `serve`, `config`, `guard` subcommands.
 - `scripts/install.ps1`, `scripts/start.ps1`, `start.cmd` — one-command
   install + serve launchers.
 - `tests/` — pytest unit tests (pure logic) + live/manual check scripts.

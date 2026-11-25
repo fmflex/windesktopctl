@@ -136,6 +136,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--rotate", action="store_true", help="generate a new token")
 
     s = sub.add_parser(
+        "config",
+        help="show/init %%LOCALAPPDATA%%\\windesktopctl\\config.toml (shell/file toggles + roots)",
+    )
+    s.add_argument("--init", action="store_true",
+                   help="write the commented template if no config exists")
+    s.add_argument("--show", action="store_true", help="print the current config")
+
+    s = sub.add_parser(
         "serve",
         help="run the MCP server over HTTP (127.0.0.1; optional tailscale expose)",
     )
@@ -238,6 +246,17 @@ def _dispatch(args) -> str:
             env_note = f"  (WINDESKTOPCTL_TOKEN env var is set and overrides the file)"
         shown = t if args.show else tok.masked(t)
         return f"token: {shown}\nfile: {path}{env_note}"
+    if cmd == "config":
+        from windesktopctl.core import config as cfg
+
+        if args.init:
+            existed = cfg.config_path().exists()
+            p = cfg.init_config()
+            return f"config: {p}" + (" (already existed)" if existed else "")
+        if args.show:
+            return json.dumps(cfg.load(), indent=2)
+        p = cfg.config_path()
+        return f"config file: {p} (exists={p.exists()}); use --init to write the template, --show to dump"
     raise WindesktopctlError(f"unknown command {cmd}")
 
 

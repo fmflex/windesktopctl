@@ -15,12 +15,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import concurrent.futures
 import functools
 import hmac
+import json
 import os
+import re
 import sys
+import threading
 import time
 from collections import OrderedDict
+from datetime import datetime, timezone
+
+from mcp.server.fastmcp import Context
 
 
 def _silence_uiautomation() -> None:
@@ -76,6 +83,18 @@ Workflow:
   browser tab|navigate refuse on challenge pages until it clears; only
   challenge_answer() may input there. If you want per-answer human approval,
   set a Devin permission "ask" rule on challenge_answer.
+- SHELL/FILE TOOLS (when enabled - see config.toml and the strong-token
+  rule for HTTP mode): exec runs powershell (default) or cmd commands -
+  a FULL shell, NOT confined to file_roots, with no stdin (pass
+  non-interactive flags). background=True returns job_id=jN - poll
+  job_output (incremental), job_kill to stop the tree, job_list to list
+  (jobs die with the server). File tools only touch absolute paths inside
+  config.toml file_roots (junctions/symlinks resolved): read_file (numbered
+  lines or base64 range), write_file, edit_file (exact-string replace),
+  list_dir, glob, grep (regex, skips .git/.venv/...), file_info (sha256 +
+  chunk count), download_chunk/upload_chunk for big files in <=4MB base64
+  chunks (upload is resumable via .part offsets). All refuse while paused
+  or when disabled in config.toml.
 - Safety: pause() / resume() / status(); hotkey Ctrl+Alt+Shift+K toggles
   pause; slamming the cursor into the top-left screen corner failsafes;
   physical keyboard/mouse input pauses automation briefly (takeover
@@ -311,13 +330,92 @@ def _env_tool_filter() -> set[str] | None:
     return {p.strip() for p in raw.split(",") if p.strip()}
 
 
-def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] | None = None):
+# ------------------------------------------------- shell/file tools (new) --
+
+# Dedicated pool for shell/file tools so a long exec never blocks the
+# single COM worker that serves the GUI tools.
+_IO_POOL = concurrent.futures.ThreadPoolExecutor(
+    max_workers=8, thread_name_prefix="windesktopctl-io"
+)
+
+_NEW_TOOL_NAMES = {
+    "exec",
+    "job_output",
+    "job_kill",
+    "job_list",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_dir",
+    "glob",
+    "grep",
+    "file_info",
+    "download_chunk",
+    "upload_chunk",
+}
+
+_audit_lock = threading.Lock()
+
+
+def _client_ip(ctx) -> str:
+    """Client IP for the audit log: streamable-HTTP request's client host
+    (uvicorn already rewrote it from trusted XFF), else 'stdio'."""
+    try:
+        req = ctx.request_context.request
+        client = getattr(req, "client", None)
+        if client is not None:
+            return str(client.host)
+    except Exception:
+        pass
+    return "stdio"
+
+
+def _audit(ctx, tool: str, **fields) -> None:
+    """Append one JSONL line to <state_dir>/audit.log. Never logs file
+    contents, env values, or tokens; audit failures never break a tool."""
+    try:
+        from windesktopctl.core import state as st
+
+        rec = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "client": _client_ip(ctx),
+            "tool": tool,
+        }
+        rec.update(fields)
+        line = json.dumps(rec, ensure_ascii=False)
+        p = st.state_dir() / "audit.log"
+        with _audit_lock:
+            with p.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except Exception:
+        pass
+
+
+def _token_strong(provider) -> bool:
+    """HTTP-mode gate for shell/file tools: token must be >=32 chars with
+    >=16 distinct characters (a urlsafe-32 token passes; 'password' doesn't)."""
+    try:
+        tok = str(provider() or "")
+    except Exception:
+        return False
+    return len(tok) >= 32 and len(set(tok)) >= 16
+
+
+def _num(text: str, pattern: str):
+    m = re.search(pattern, text or "")
+    return m.group(1) if m else None
+
+
+def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] | None = None,
+                  token_provider=None):
     _silence_uiautomation()
     from mcp.server.fastmcp import FastMCP
     from mcp.server.transport_security import TransportSecuritySettings
 
     from windesktopctl.core import WindesktopctlError
     from windesktopctl.core import api
+    from windesktopctl.core import files as files_core
+    from windesktopctl.core import shell as shell_core
     from windesktopctl.core import worker
 
     ts = None
@@ -327,7 +425,14 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
             allowed_hosts=list(allowed_hosts),
         )
 
-    mcp = FastMCP("windesktopctl", instructions=INSTRUCTIONS, transport_security=ts)
+    mcp = FastMCP(
+        "windesktopctl",
+        instructions=INSTRUCTIONS,
+        transport_security=ts,
+        # upload/download chunks are <=4MB raw -> ~5.6MB base64 inside the
+        # JSON-RPC body; the 4MiB default would 413 them.
+        max_request_body_size=8 * 1024 * 1024,
+    )
 
     def _call(fn, *args):
         return worker.submit(fn, *args).result()
@@ -554,6 +659,246 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         except WindesktopctlError as e:
             return _err(e)
 
+    # ------------------------------------------------ shell / file tools --
+    # Run on _IO_POOL (not the COM worker) so a long exec can't block GUI
+    # tools. Each refuses while paused or when disabled in config.toml.
+
+    async def _aiocall(fn, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_IO_POOL, functools.partial(fn, *args))
+
+    async def exec(
+        command: str,
+        shell: str = "powershell",
+        cwd: str | None = None,
+        timeout_s: int = 120,
+        env: dict | None = None,
+        background: bool = False,
+        ctx: Context | None = None,
+    ) -> str:
+        """Run a shell command on this PC - powershell (default) or cmd.
+        FULL shell access, NOT confined to file_roots; cwd is likewise
+        unrestricted and defaults to the user's home directory when
+        omitted. There is NO stdin: pass non-interactive flags
+        (-NonInteractive is already set for powershell). timeout_s is
+        clamped to 1..1800 (default 120); on timeout the whole process tree
+        is killed. env merges over the process environment. background=True
+        returns job_id=jN immediately - poll job_output for incremental
+        output, job_kill to stop the tree, job_list to list (jobs do NOT
+        survive a server restart). Refuses while paused or when
+        shell_enabled=false in config.toml."""
+        try:
+            res = await _aiocall(
+                shell_core.exec_cmd, command, shell, cwd, timeout_s, env, background
+            )
+        except WindesktopctlError as e:
+            return _err(e)
+        meta = {"command": str(command)[:500], "shell": shell}
+        ec = _num(res, r"exit_code=(-?\d+)")
+        if ec is not None:
+            meta["exit_code"] = int(ec)
+        jid = _num(res, r"job_id=(j\d+)")
+        if jid:
+            meta["job_id"] = jid
+        _audit(ctx, "exec", **meta)
+        return res
+
+    async def job_output(
+        job_id: str, max_bytes: int = 65536, ctx: Context | None = None
+    ) -> str:
+        """New output since your last job_output call for this job (the
+        server keeps a read cursor per stream), plus running/exited status
+        and elapsed time. max_bytes caps the total returned (default 64KB,
+        max 4MB)."""
+        try:
+            return await _aiocall(shell_core.job_output, job_id, max_bytes)
+        except WindesktopctlError as e:
+            return _err(e)
+
+    async def job_kill(job_id: str, ctx: Context | None = None) -> str:
+        """Kill a background job's whole process tree; returns the final
+        status (exited code=N)."""
+        try:
+            res = await _aiocall(shell_core.job_kill, job_id)
+        except WindesktopctlError as e:
+            return _err(e)
+        _audit(ctx, "job_kill", job_id=job_id, result=res[:200])
+        return res
+
+    async def job_list(ctx: Context | None = None) -> str:
+        """List known background jobs: id, status, started time, command
+        (truncated). Jobs are in-memory only - a server restart forgets them."""
+        try:
+            return await _aiocall(shell_core.job_list)
+        except WindesktopctlError as e:
+            return _err(e)
+
+    async def read_file(
+        path: str,
+        offset: int = 1,
+        limit: int = 2000,
+        numbered: bool = True,
+        mode: str = "text",
+        byte_offset: int = 0,
+        byte_length: int | None = None,
+        ctx: Context | None = None,
+    ) -> str:
+        """Read a file inside config.toml file_roots (absolute path only;
+        junctions/symlinks resolved - escapes are refused). Text mode
+        (default): numbered 'N\\tline' output, offset is 1-based, capped at
+        ~256KB - use offset/limit for more. mode='base64' returns a JSON
+        byte range {offset,length,eof,size,data_b64} (<=1MB raw per call)."""
+        try:
+            res = await _aiocall(
+                files_core.read_file, path, offset, limit, numbered,
+                mode, byte_offset, byte_length,
+            )
+        except WindesktopctlError as e:
+            return _err(e)
+        _audit(ctx, "read_file", path=str(path))
+        return res
+
+    async def write_file(
+        path: str,
+        text: str | None = None,
+        content_b64: str | None = None,
+        append: bool = False,
+        ctx: Context | None = None,
+    ) -> str:
+        """Write a file inside file_roots (parent dirs are created).
+        Exactly one of text= (utf-8) or content_b64= (binary). Non-append
+        writes are atomic (temp file + rename); append=true adds bytes."""
+        try:
+            res = await _aiocall(
+                files_core.write_file, path, text, content_b64, append
+            )
+        except WindesktopctlError as e:
+            return _err(e)
+        _audit(
+            ctx, "write_file", path=str(path), append=bool(append),
+            bytes_written=_num(res, r"wrote (\d+)"),
+        )
+        return res
+
+    async def edit_file(
+        path: str,
+        old: str,
+        new: str,
+        replace_all: bool = False,
+        ctx: Context | None = None,
+    ) -> str:
+        """Exact-string replace in a utf-8 file inside file_roots. `old`
+        must occur exactly once unless replace_all=true (error lists the
+        count + first line numbers). On CRLF files a bare-LF old/new is
+        retried normalized to CRLF. Non-utf8 files are refused (use
+        write_file/content_b64). Returns count + line numbers."""
+        try:
+            res = await _aiocall(files_core.edit_file, path, old, new, replace_all)
+        except WindesktopctlError as e:
+            return _err(e)
+        _audit(
+            ctx, "edit_file", path=str(path), replace_all=bool(replace_all),
+            replacements=_num(res, r"replaced (\d+)"),
+        )
+        return res
+
+    async def list_dir(
+        path: str, max_entries: int = 1000, ctx: Context | None = None
+    ) -> str:
+        """List a directory inside file_roots: 'd|f  size  mtime  name',
+        directories first, truncated at max_entries (default 1000)."""
+        try:
+            return await _aiocall(files_core.list_dir, path, max_entries)
+        except WindesktopctlError as e:
+            return _err(e)
+
+    async def glob(
+        pattern: str, path: str, max_results: int = 1000,
+        ctx: Context | None = None,
+    ) -> str:
+        """pathlib-style glob (supports '**') under a root-checked directory.
+        Skips .git/node_modules/__pycache__/.venv unless the pattern names
+        them; matches escaping the roots via junctions are dropped. Sorted,
+        truncated at max_results."""
+        try:
+            return await _aiocall(files_core.glob_files, pattern, path, max_results)
+        except WindesktopctlError as e:
+            return _err(e)
+
+    async def grep(
+        pattern: str,
+        path: str,
+        glob: str | None = None,
+        max_results: int = 200,
+        case_insensitive: bool = False,
+        context: int = 0,
+        ctx: Context | None = None,
+    ) -> str:
+        """Regex search over files under a root-checked directory:
+        'path:line: text' for matches ('path-line- text' for context
+        lines). Skips binary files (NUL in first 8KB), files >20MB, and
+        .git/node_modules/__pycache__/.venv dirs; `glob` filters file paths
+        (pathlib match syntax). 30s budget -> partial results + note."""
+        try:
+            return await _aiocall(
+                files_core.grep_files, pattern, path, glob, max_results,
+                case_insensitive, context,
+            )
+        except WindesktopctlError as e:
+            return _err(e)
+
+    async def file_info(path: str, ctx: Context | None = None) -> str:
+        """size, mtime, sha256 (streamed) and 4MB-chunk count for a file
+        inside file_roots - call before download_chunk on big files."""
+        try:
+            return await _aiocall(files_core.file_info, path)
+        except WindesktopctlError as e:
+            return _err(e)
+
+    async def download_chunk(
+        path: str,
+        offset: int = 0,
+        length: int = 4194304,
+        ctx: Context | None = None,
+    ) -> str:
+        """Fetch one <=4MB base64 chunk of a file inside file_roots as JSON
+        {path,offset,length,eof,size,data_b64}. Reassemble chunks at their
+        offsets to pull big files through the agent."""
+        try:
+            res = await _aiocall(files_core.download_chunk, path, offset, length)
+        except WindesktopctlError as e:
+            return _err(e)
+        _audit(ctx, "download_chunk", path=str(path))
+        return res
+
+    async def upload_chunk(
+        path: str,
+        offset: int,
+        data_b64: str,
+        done: bool = False,
+        sha256: str | None = None,
+        overwrite: bool = False,
+        ctx: Context | None = None,
+    ) -> str:
+        """Upload a file in <=4MB base64 chunks (resumable). offset must
+        equal the current <path>.part size - 0 restarts, anything else is
+        an error telling you the expected offset. done=true verifies
+        sha256 when given, refuses to clobber an existing file unless
+        overwrite=true, then renames .part into place."""
+        try:
+            res = await _aiocall(
+                files_core.upload_chunk, path, offset, data_b64,
+                done, sha256, overwrite,
+            )
+        except WindesktopctlError as e:
+            return _err(e)
+        if done or int(offset) == 0:
+            _audit(
+                ctx, "upload_chunk", path=str(path), offset=int(offset),
+                done=bool(done), bytes=_num(res, r"(\d+) bytes"),
+            )
+        return res
+
     tool_fns = {
         "observe": observe,
         "screenshot": screenshot,
@@ -569,12 +914,41 @@ def create_server(tool_names: set[str] | None = None, allowed_hosts: list[str] |
         "pause": pause,
         "resume": resume,
         "status": status,
+        "exec": exec,
+        "job_output": job_output,
+        "job_kill": job_kill,
+        "job_list": job_list,
+        "read_file": read_file,
+        "write_file": write_file,
+        "edit_file": edit_file,
+        "list_dir": list_dir,
+        "glob": glob,
+        "grep": grep,
+        "file_info": file_info,
+        "download_chunk": download_chunk,
+        "upload_chunk": upload_chunk,
     }
+
+    # HTTP mode requires a strong bearer token before shell/file tools are
+    # exposed; stdio (local Devin) always registers them - config.toml and
+    # pause still gate every call.
+    register_new = True
+    if allowed_hosts is not None:
+        register_new = token_provider is not None and _token_strong(token_provider)
+        if not register_new:
+            print(
+                "windesktopctl: shell/file tools NOT enabled: token too weak "
+                "(<32 random chars)",
+                file=sys.stderr,
+                flush=True,
+            )
 
     allow = tool_names if tool_names is not None else _env_tool_filter()
     known = set(tool_fns)
     for name, fn in tool_fns.items():
         if allow is not None and name not in allow:
+            continue
+        if name in _NEW_TOOL_NAMES and not register_new:
             continue
         mcp.tool()(fn)
     if allow is not None:
@@ -609,7 +983,9 @@ def _http_allowed_hosts(host: str, extra: list[str]) -> list[str]:
 def build_http_app(allowed_hosts: list[str] | None, token_provider) -> object:
     """FastMCP streamable-HTTP app wrapped in bearer auth. Shared by
     `windesktopctl-mcp --http` and `windesktopctl serve`."""
-    server = create_server(allowed_hosts=allowed_hosts)
+    server = create_server(
+        allowed_hosts=allowed_hosts, token_provider=token_provider
+    )
     return BearerAuthMiddleware(server.streamable_http_app(), token_provider)
 
 

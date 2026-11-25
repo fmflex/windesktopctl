@@ -14,14 +14,56 @@ def _tool_names(server) -> set[str]:
     return asyncio.run(go())
 
 
+_BASE_TOOLS = {
+    "observe", "screenshot", "act", "windows", "focus", "wait_for",
+    "window", "launch", "browser", "challenge", "challenge_answer",
+    "pause", "resume", "status",
+}
+_NEW_TOOLS = {
+    "exec", "job_output", "job_kill", "job_list", "read_file", "write_file",
+    "edit_file", "list_dir", "glob", "grep", "file_info", "download_chunk",
+    "upload_chunk",
+}
+_WEAK_TOKEN = "a" * 16 + "b" * 16  # 32 chars but only 2 distinct -> weak
+_GOOD_TOKEN = "0123456789abcdef" * 2  # 32 chars, 16 distinct -> strong
+
+
 def test_all_tools_by_default(monkeypatch):
     monkeypatch.delenv("WINDESKTOPCTL_TOOLS", raising=False)
     names = _tool_names(create_server())
-    assert names == {
-        "observe", "screenshot", "act", "windows", "focus", "wait_for",
-        "window", "launch", "browser", "challenge", "challenge_answer",
-        "pause", "resume", "status",
-    }
+    assert names == _BASE_TOOLS | _NEW_TOOLS
+
+
+def test_http_weak_token_hides_new_tools(capsys):
+    srv = create_server(allowed_hosts=["127.0.0.1"], token_provider=lambda: _WEAK_TOKEN)
+    names = _tool_names(srv)
+    assert names == _BASE_TOOLS
+    assert names.isdisjoint(_NEW_TOOLS)
+    assert "token too weak" in capsys.readouterr().err
+
+
+def test_http_missing_token_provider_hides_new_tools(capsys):
+    srv = create_server(allowed_hosts=["127.0.0.1"], token_provider=None)
+    assert _tool_names(srv) == _BASE_TOOLS
+    assert "token too weak" in capsys.readouterr().err
+
+
+def test_http_strong_token_registers_new_tools():
+    srv = create_server(allowed_hosts=["127.0.0.1"], token_provider=lambda: _GOOD_TOKEN)
+    names = _tool_names(srv)
+    assert names == _BASE_TOOLS | _NEW_TOOLS
+
+
+def test_stdio_registers_new_tools_without_token():
+    """stdio mode (local Devin) has no bearer token - new tools register;
+    config.toml + pause still gate every call."""
+    names = _tool_names(create_server())
+    assert _NEW_TOOLS <= names
+
+
+def test_new_tools_respect_allowlist():
+    names = _tool_names(create_server(tool_names={"exec", "read_file", "status"}))
+    assert names == {"exec", "read_file", "status"}
 
 
 def test_tools_allowlist_arg():
@@ -95,3 +137,63 @@ def test_transport_security_host_validation():
     assert r is not None and r.status_code == 421
     r = check("127.0.0.1.evil.com")
     assert r is not None and r.status_code == 421
+
+
+# ------------------------------------------------------------- audit log --
+
+
+def _fake_ctx(ip):
+    class Addr:
+        host = ip
+
+    class Req:
+        client = Addr()
+
+    class RC:
+        request = Req()
+
+    class Ctx:
+        request_context = RC()
+
+    return Ctx()
+
+
+def test_client_ip_from_ctx():
+    from windesktopctl.mcp_server import _client_ip
+
+    assert _client_ip(_fake_ctx("203.0.113.9")) == "203.0.113.9"
+    assert _client_ip(None) == "stdio"
+
+    class Empty:
+        request_context = None
+
+    assert _client_ip(Empty()) == "stdio"
+
+
+def test_audit_log_fields_and_no_content(tmp_path, monkeypatch):
+    import json as _json
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("WINDESKTOPCTL_HOME", str(home))
+
+    from windesktopctl.mcp_server import _audit
+
+    _audit(_fake_ctx("198.51.100.7"), "exec",
+           command="echo secret-content", shell="cmd", exit_code=0)
+    _audit(None, "read_file", path="C:/roots/f.txt")
+
+    lines = (home / "audit.log").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    r1 = _json.loads(lines[0])
+    assert r1["client"] == "198.51.100.7"
+    assert r1["tool"] == "exec"
+    assert r1["command"] == "echo secret-content"
+    assert r1["exit_code"] == 0
+    assert "ts" in r1
+    r2 = _json.loads(lines[1])
+    assert r2["client"] == "stdio"
+    assert r2["tool"] == "read_file"
+    assert r2["path"] == "C:/roots/f.txt"
+    # never file contents / env / token
+    assert "content" not in r1 and "env" not in r1 and "token" not in r1

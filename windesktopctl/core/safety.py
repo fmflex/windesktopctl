@@ -145,11 +145,18 @@ def check_user_takeover() -> None:
         )
 
 
+def check_paused() -> None:
+    """Pause-only gate for non-GUI tools (shell/file): the failsafe corner
+    sets pause, so it blocks these too - but physical-input takeover does
+    not, since shell/file work doesn't fight the user's mouse."""
+    if is_paused():
+        raise WindesktopctlError("paused - Ctrl+Alt+Shift+K toggles pause; `windesktopctl resume` clears it")
+
+
 def check_before_action() -> None:
     """Gate every act(): refuse while paused or while the user is physically
     active; slamming the cursor into the top-left corner failsafes."""
-    if is_paused():
-        raise WindesktopctlError("paused - Ctrl+Alt+Shift+K toggles pause; `windesktopctl resume` clears it")
+    check_paused()
     check_user_takeover()
     x, y = _input.cursor_pos()
     if is_failsafe_position(x, y):

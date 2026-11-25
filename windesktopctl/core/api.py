@@ -12,6 +12,7 @@ import os
 import random
 import re
 import shlex
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -842,20 +843,39 @@ def launch(target) -> str:
     before = {w.hwnd for w in win.list_windows()}
     pid = None
     if _is_url_or_file(t):
+        # URLs keep the inherited cwd; a local file launches with cwd set to
+        # its own directory so the app doesn't inherit (and possibly write
+        # into) the server's working directory.
+        m = _URL_RE.match(t)
+        is_url = bool(m and len(m.group(1)) > 1)  # scheme longer than a drive letter
+        cwd = None
+        if not is_url and os.path.isfile(t):
+            cwd = os.path.dirname(os.path.abspath(t)) or None
         try:
-            os.startfile(t)
+            os.startfile(t, cwd=cwd)
         except OSError as ex:
             raise WindesktopctlError(f'cannot launch "{t}": {ex}')
     else:
         argv = _split_command(t)
         if not argv:
             raise WindesktopctlError(f'cannot parse launch target "{t}"')
+        # When argv[0] resolves to an existing file (direct path or via
+        # PATH), run it with cwd = that file's directory instead of the
+        # server's cwd.
+        exe = argv[0]
+        exe_path = exe if os.path.isfile(exe) else shutil.which(exe)
+        cwd = (
+            os.path.dirname(os.path.abspath(exe_path))
+            if exe_path and os.path.isfile(exe_path)
+            else None
+        )
         try:
             proc = subprocess.Popen(
                 argv,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                cwd=cwd,
             )
             pid = proc.pid
         except OSError as ex:
